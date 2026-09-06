@@ -266,28 +266,30 @@ fun MixedRealityScreen(
       .background(Color.Black)
   ) {
     // 0. Live Hardware Camera Passthrough (AR & MR modes)
-    CameraPassthroughView(
-      displayMode = displayMode,
-      hasCameraPermission = hasCameraPermission,
-      onRequestPermission = {
-        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-      },
-      onDualCameraCreated = { dualView ->
-        dualView.arCoreSessionManager = spatialSurfaceView.arCoreSessionManager
-        dualView.depthOcclusionManager = spatialSurfaceView.depthOcclusionManager
-        dualView.onCameraTextureReady = { texName ->
-          spatialSurfaceView.arCoreSessionManager.setCameraTextureName(texName)
-          if (displayMode == DisplayMode.AR || displayMode == DisplayMode.MR) {
-            activity?.let { act ->
-              spatialSurfaceView.arCoreSessionManager.resumeSession(act)
+    if (displayMode != DisplayMode.OBJECT) {
+      CameraPassthroughView(
+        displayMode = displayMode,
+        hasCameraPermission = hasCameraPermission,
+        onRequestPermission = {
+          cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        },
+        onDualCameraCreated = { dualView ->
+          dualView.arCoreSessionManager = spatialSurfaceView.arCoreSessionManager
+          dualView.depthOcclusionManager = spatialSurfaceView.depthOcclusionManager
+          dualView.onCameraTextureReady = { texName ->
+            spatialSurfaceView.arCoreSessionManager.setCameraTextureName(texName)
+            if (displayMode == DisplayMode.AR || displayMode == DisplayMode.MR) {
+              activity?.let { act ->
+                spatialSurfaceView.arCoreSessionManager.resumeSession(act)
+              }
             }
           }
-        }
-        spatialSurfaceView.dualCameraGLSurfaceView = dualView
-      },
-      isArCoreActive = (displayMode == DisplayMode.AR || displayMode == DisplayMode.MR) && spatialSurfaceView.arCoreSessionManager.isSupported,
-      modifier = Modifier.fillMaxSize()
-    )
+          spatialSurfaceView.dualCameraGLSurfaceView = dualView
+        },
+        isArCoreActive = (displayMode == DisplayMode.AR || displayMode == DisplayMode.MR) && spatialSurfaceView.arCoreSessionManager.isSupported,
+        modifier = Modifier.fillMaxSize()
+      )
+    }
 
     // 1. Unified Google Filament + ARCore SurfaceView Canvas
     AndroidView(

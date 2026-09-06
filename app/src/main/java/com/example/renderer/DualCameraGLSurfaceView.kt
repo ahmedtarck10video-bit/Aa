@@ -1,7 +1,9 @@
 package com.example.renderer
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
@@ -190,11 +192,24 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
 
   var displayMode: DisplayMode = DisplayMode.OBJECT
     set(value) {
+      val changed = field != value
       field = value
       renderMode = if (value == DisplayMode.OBJECT) {
         RENDERMODE_WHEN_DIRTY
       } else {
         RENDERMODE_CONTINUOUSLY
+      }
+      if (changed) {
+        if (value == DisplayMode.OBJECT) {
+          stopCameraX()
+        } else {
+          lifecycleOwner?.let { owner ->
+            val sm = arCoreSessionManager
+            if (sm == null || !sm.isArCorePackageInstalled()) {
+              startCameraX(owner)
+            }
+          }
+        }
       }
       try {
         requestRender()
@@ -276,6 +291,7 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
 
   fun attachLifecycle(owner: LifecycleOwner) {
     this.lifecycleOwner = owner
+    if (displayMode == DisplayMode.OBJECT) return
     val sm = arCoreSessionManager
     if (cameraSurface != null && (sm == null || sm.session == null || !sm.isArCorePackageInstalled())) {
       startCameraX(owner)
@@ -283,6 +299,12 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
   }
 
   fun startCameraX(owner: LifecycleOwner) {
+    if (displayMode == DisplayMode.OBJECT) return
+    val hasPermission = ContextCompat.checkSelfPermission(
+      context,
+      Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    if (!hasPermission) return
     val surf = cameraSurface ?: return
     if (!surf.isValid) return
 
@@ -400,8 +422,8 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
         }
       }
 
-      // CameraX is strictly a fallback for devices without ARCore installed
-      if (sm != null && !sm.isArCorePackageInstalled()) {
+      // CameraX is strictly a fallback for devices without ARCore installed when in AR or MR mode
+      if (displayMode != DisplayMode.OBJECT && sm != null && !sm.isArCorePackageInstalled()) {
         lifecycleOwner?.let { owner ->
           post {
             startCameraX(owner)
