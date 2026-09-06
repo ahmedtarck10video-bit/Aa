@@ -411,7 +411,9 @@ class SpatialSurfaceView @JvmOverloads constructor(
                 maxDepth = depthOcclusionManager.maxDepthMeters,
                 avgDepth = depthOcclusionManager.averageDepthMeters,
                 isReady = depthOcclusionManager.isDepthTextureReady,
-                occlusionPercentage = depthOcclusionManager.occlusionPercentage
+                occlusionPercentage = depthOcclusionManager.occlusionPercentage,
+                depthUvTransformMatrix = depthOcclusionManager.depthUvTransformMatrix,
+                viewMatrix = scratchViewMatrix
               )
             }
 
@@ -510,7 +512,9 @@ class SpatialSurfaceView @JvmOverloads constructor(
               maxDepth = depthOcclusionManager.maxDepthMeters,
               avgDepth = depthOcclusionManager.averageDepthMeters,
               isReady = depthOcclusionManager.isDepthTextureReady,
-              occlusionPercentage = depthOcclusionManager.occlusionPercentage
+              occlusionPercentage = depthOcclusionManager.occlusionPercentage,
+              depthUvTransformMatrix = depthOcclusionManager.depthUvTransformMatrix,
+              viewMatrix = scratchViewMatrix
             )
           }
 

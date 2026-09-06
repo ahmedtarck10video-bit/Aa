@@ -165,10 +165,22 @@ class FilamentEngineHolder(private val context: Context) {
     private set
   var isGpuDepthOcclusionActive: Boolean = false
     private set
+  var isGpuFragmentOcclusionActive: Boolean = false
+    private set
   var isDepthTextureBoundToPipeline: Boolean = false
     private set
   var currentOcclusionPercentage: Float = 0f
     private set
+
+  val depthOcclusionMaterialHelper = FilamentDepthOcclusionMaterial()
+
+  val gpuOcclusionPipelineMode: String
+    get() = when {
+      isGpuFragmentOcclusionActive -> "GPU_FRAGMENT_OCCLUSION_ACTIVE"
+      isDepthTextureBoundToPipeline -> "GPU_DEPTH_TEXTURE_BOUND"
+      depthTextureId != 0 -> "GPU_DEPTH_TEXTURE_UPLOADED"
+      else -> "CPU_ANALYTICAL_OCCLUSION_ACTIVE"
+    }
 
   private var filamentDepthTexture: Texture? = null
   private var depthTextureSampler: TextureSampler? = null
@@ -187,16 +199,18 @@ class FilamentEngineHolder(private val context: Context) {
     maxDepth: Float,
     avgDepth: Float,
     isReady: Boolean,
-    occlusionPercentage: Float
+    occlusionPercentage: Float,
+    depthUvTransformMatrix: FloatArray? = null,
+    viewMatrix: FloatArray? = null
   ) {
     depthTextureId = textureId
-    isGpuDepthOcclusionActive = isReady && textureId != 0
+    val isUploadReady = isReady && textureId != 0
     currentOcclusionPercentage = occlusionPercentage
 
     val eng = engine ?: return
     val v = view ?: return
 
-    if (isGpuDepthOcclusionActive) {
+    if (isUploadReady) {
       v.isPostProcessingEnabled = true
 
       // 1. Import OpenGL depth texture into Filament GPU Texture
@@ -299,8 +313,32 @@ class FilamentEngineHolder(private val context: Context) {
       }
       // Accurately distinguish texture upload/binding from true per-fragment shader occlusion
       isDepthTextureBoundToPipeline = filamentDepthTexture != null && isReady && textureId != 0
-      isGpuDepthOcclusionActive = isDepthTextureBoundToPipeline && boundDepthShaderCount > 0
+
+      var shaderOcclusionExecuting = false
+      if (isDepthTextureBoundToPipeline && depthOcclusionMaterialHelper.isShaderCompiledAndVerified) {
+        filamentDepthTexture?.let { tex ->
+          depthTextureSampler?.let { sampler ->
+            val uvs = depthUvTransformMatrix ?: FloatArray(16).apply { android.opengl.Matrix.setIdentityM(this, 0) }
+            val vMat = viewMatrix ?: FloatArray(16).apply { android.opengl.Matrix.setIdentityM(this, 0) }
+            depthOcclusionMaterialHelper.bindParameters(
+              texture = tex,
+              sampler = sampler,
+              depthUvTransform = uvs,
+              viewMatrix = vMat,
+              toleranceMeters = 0.04f,
+              isEnabled = true
+            )
+            shaderOcclusionExecuting = depthOcclusionMaterialHelper.isOcclusionShaderExecuting
+          }
+        }
+      } else if (boundDepthShaderCount > 0) {
+        shaderOcclusionExecuting = true
+      }
+
+      isGpuFragmentOcclusionActive = isDepthTextureBoundToPipeline && shaderOcclusionExecuting
+      isGpuDepthOcclusionActive = isGpuFragmentOcclusionActive
     } else {
+      depthOcclusionMaterialHelper.disableOcclusion()
       val allMaterials = mutableListOf<MaterialInstance>()
       currentAsset?.instance?.materialInstances?.let {
         for (m in it) allMaterials.add(m)
@@ -322,6 +360,7 @@ class FilamentEngineHolder(private val context: Context) {
         mat.setMaterialDepthFunc(FilamentMaterialDepthFunc.REVERSED_Z_DEFAULT)
       }
       isDepthTextureBoundToPipeline = false
+      isGpuFragmentOcclusionActive = false
       isGpuDepthOcclusionActive = false
     }
   }
@@ -330,6 +369,7 @@ class FilamentEngineHolder(private val context: Context) {
    * Resets GPU depth textures and pipelines on tracking loss or ARCore session recreation.
    */
   fun clearGpuDepthAndTrackingResources() {
+    depthOcclusionMaterialHelper.disableOcclusion()
     val eng = engine
     if (eng != null && filamentDepthTexture != null) {
       try {
@@ -339,6 +379,7 @@ class FilamentEngineHolder(private val context: Context) {
     }
     lastImportedTextureId = 0
     depthTextureId = 0
+    isGpuFragmentOcclusionActive = false
     isGpuDepthOcclusionActive = false
     isDepthTextureBoundToPipeline = false
     currentOcclusionPercentage = 0f
@@ -462,6 +503,9 @@ class FilamentEngineHolder(private val context: Context) {
     materialProvider = matProvider
     assetLoader = AssetLoader(eng, matProvider, EntityManager.get())
     resourceLoader = ResourceLoader(eng)
+
+    // Compile and verify True GPU Depth Occlusion material pipeline
+    depthOcclusionMaterialHelper.compileAndVerify(eng)
 
     // Setup Sun & Ambient Lights
     setupLights(eng, scn)
@@ -1251,6 +1295,8 @@ class FilamentEngineHolder(private val context: Context) {
 
       filamentDepthTexture?.let { eng.destroyTexture(it) }
       filamentDepthTexture = null
+
+      depthOcclusionMaterialHelper.destroy(eng)
 
       swapChain?.let { eng.destroySwapChain(it) }
       swapChain = null

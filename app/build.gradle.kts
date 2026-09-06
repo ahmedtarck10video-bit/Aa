@@ -113,6 +113,7 @@ dependencies {
   implementation(libs.filament.android)
   implementation(libs.gltfio.android)
   implementation(libs.filament.utils.android)
+  implementation(libs.filamat.android)
   implementation(libs.arcore)
   implementation(libs.firebase.ai)
   // Uncomment to use Firestore:

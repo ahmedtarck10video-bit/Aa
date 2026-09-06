@@ -82,6 +82,7 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
       varying vec2 vScreenUv;
       uniform samplerExternalOES uTexture;
       uniform sampler2D uPhysicalDepthTexture;
+      uniform mat4 uDepthUvMatrix;
       uniform int uDepthOcclusionActive;
       uniform float uMinPhysicalDepth;
       uniform float uMaxPhysicalDepth;
@@ -100,14 +101,18 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
       void main() {
         vec4 cameraColor = texture2D(uTexture, vTexCoord);
         if (uDepthOcclusionActive == 1) {
-          // True GPU depth occlusion: physical depth is actually sampled and compared
-          float physicalDepth = reconstructPhysicalDepthMeters(uPhysicalDepthTexture, vScreenUv);
-          if (physicalDepth > 0.08) {
-            float compareDepth = (uVirtualDepth > 0.1) ? uVirtualDepth : uMaxPhysicalDepth;
-            if (physicalDepth < compareDepth) {
-              // Real foreground physical object occludes virtual background
-              gl_FragColor = cameraColor;
-              return;
+          // True GPU depth occlusion: physical depth sampled via ARCore calibrated transformCoordinates2d UV matrix
+          vec4 depthUvHomogeneous = uDepthUvMatrix * vec4(vScreenUv, 0.0, 1.0);
+          vec2 depthUv = depthUvHomogeneous.xy / depthUvHomogeneous.w;
+          if (depthUv.x >= 0.0 && depthUv.x <= 1.0 && depthUv.y >= 0.0 && depthUv.y <= 1.0) {
+            float physicalDepth = reconstructPhysicalDepthMeters(uPhysicalDepthTexture, depthUv);
+            if (physicalDepth > 0.08) {
+              float compareDepth = (uVirtualDepth > 0.1) ? uVirtualDepth : uMaxPhysicalDepth;
+              if (physicalDepth < compareDepth) {
+                // Real foreground physical object occludes virtual background
+                gl_FragColor = cameraColor;
+                return;
+              }
             }
           }
         }
@@ -129,12 +134,20 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
   private var uTexMatrixHandle = 0
   private var uTextureHandle = 0
   private var uPhysicalDepthTextureHandle = 0
+  private var uDepthUvMatrixHandle = 0
   private var uDepthOcclusionActiveHandle = 0
   private var uMinPhysicalDepthHandle = 0
   private var uMaxPhysicalDepthHandle = 0
   private var uVirtualDepthHandle = 0
   var textureId = 0
     private set
+
+  val cameraStreamStatus: String
+    get() = when {
+      totalCameraFramesReceived > 0L && !isCameraXActive -> "ARCORE_CAMERA_ACTIVE"
+      isCameraXActive -> "CAMERAX_FALLBACK_ACTIVE"
+      else -> "CAMERA_UNAVAILABLE"
+    }
 
   var onCameraTextureReady: ((Int) -> Unit)? = null
   var onCameraSurfaceReady: ((Surface) -> Unit)? = null
@@ -337,10 +350,14 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
       uTexMatrixHandle = GLES20.glGetUniformLocation(program, "uTexMatrix")
       uTextureHandle = GLES20.glGetUniformLocation(program, "uTexture")
       uPhysicalDepthTextureHandle = GLES20.glGetUniformLocation(program, "uPhysicalDepthTexture")
+      uDepthUvMatrixHandle = GLES20.glGetUniformLocation(program, "uDepthUvMatrix")
       uDepthOcclusionActiveHandle = GLES20.glGetUniformLocation(program, "uDepthOcclusionActive")
       uMinPhysicalDepthHandle = GLES20.glGetUniformLocation(program, "uMinPhysicalDepth")
       uMaxPhysicalDepthHandle = GLES20.glGetUniformLocation(program, "uMaxPhysicalDepth")
       uVirtualDepthHandle = GLES20.glGetUniformLocation(program, "uVirtualDepth")
+
+      // Cleanly rebind and recreate depth texture under this new GL context
+      depthOcclusionManager?.resetGpuTextureOnContextLoss()
 
       // 1. Generate the ONE authoritative GL External Texture
       val textures = IntArray(1)
@@ -486,6 +503,7 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, dom.depthTextureId)
         GLES20.glUniform1i(uPhysicalDepthTextureHandle, 1)
+        GLES20.glUniformMatrix4fv(uDepthUvMatrixHandle, 1, false, dom.depthUvTransformMatrix, 0)
         GLES20.glUniform1i(uDepthOcclusionActiveHandle, 1)
         GLES20.glUniform1f(uMinPhysicalDepthHandle, dom.minDepthMeters)
         GLES20.glUniform1f(uMaxPhysicalDepthHandle, dom.maxDepthMeters)

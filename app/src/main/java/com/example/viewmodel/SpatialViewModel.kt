@@ -380,9 +380,15 @@ class SpatialViewModel(application: Application) : AndroidViewModel(application)
           isGpuDepthOcclusionActive -> "GPU_FRAGMENT_OCCLUSION_ACTIVE"
           isDepthTextureBoundToPipeline -> "GPU_DEPTH_TEXTURE_BOUND"
           depthManager?.isDepthTextureReady == true && ((depthManager?.depthTextureId ?: 0) != 0) -> "GPU_DEPTH_TEXTURE_UPLOADED"
-          else -> "CPU_ANALYTICAL"
+          else -> "CPU_ANALYTICAL_OCCLUSION_ACTIVE"
         },
+        cameraStreamStatus = if (trackingData.trackingState == TrackingState.TRACKING) "ARCORE_CAMERA_ACTIVE" else "CAMERA_STREAM_ACTIVE",
         isInstantPlacementActive = trackingData.isInstantPlacementEnabled,
+        isGeospatialSupported = trackingData.geospatialStatus.isSupported,
+        isGeospatialEnabled = trackingData.geospatialStatus.isEnabled,
+        hasLocationPermission = trackingData.geospatialStatus.locationPermissionGranted,
+        isEarthTrackingActive = trackingData.geospatialStatus.trackingState == "TRACKING",
+        isVpsLocalized = trackingData.geospatialStatus.isVpsLocalized,
         isGeospatialActive = trackingData.geospatialStatus.isEnabled && trackingData.geospatialStatus.trackingState == "TRACKING",
         earthTrackingState = when {
           !trackingData.geospatialStatus.isSupported -> "UNSUPPORTED"
@@ -416,7 +422,7 @@ class SpatialViewModel(application: Application) : AndroidViewModel(application)
         isGoogleCertifiedDevice = trackingData.certification?.isGoogleCertifiedDevice ?: false,
         isArCoreSupported = trackingData.certification?.isArCoreSupported ?: true,
         isArCoreInstalled = trackingData.certification?.isArCoreInstalled ?: true,
-        mrPassthroughSemantics = "Monoscopic Passthrough + Stereoscopic Virtual Rendering",
+        mrPassthroughSemantics = "MONOSCOPIC_CAMERA + STEREOSCOPIC_VIRTUAL_RENDERING",
         isTrueBinocularPassthrough = false,
         isRealtimeBackendConnected = trackingData.isRealtimeBackendConnected,
         isMultiplayerActive = trackingData.isMultiplayerActive,

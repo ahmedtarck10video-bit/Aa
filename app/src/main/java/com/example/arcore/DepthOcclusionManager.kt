@@ -75,6 +75,17 @@ class DepthOcclusionManager {
   // Scratch coordinate buffers for ARCore Coordinates2d view-to-depth UV mapping
   private val viewCoordScratch = FloatArray(2)
   private val depthCoordScratch = FloatArray(2)
+  private val scratchScreenPts = floatArrayOf(0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f)
+  private val scratchDepthUvs = FloatArray(6)
+
+  /**
+   * 4x4 Affine Transformation Matrix mapping Viewport Screen UV to Depth Texture UV.
+   * Derived mathematically from ARCore transformCoordinates2d to account for camera image orientation,
+   * display rotation, aspect ratio cropping, and viewport dimensions.
+   */
+  val depthUvTransformMatrix = FloatArray(16).apply {
+    android.opengl.Matrix.setIdentityM(this, 0)
+  }
 
   // Occlusion status
   var isOcclusionDetected: Boolean = false
@@ -123,6 +134,45 @@ class DepthOcclusionManager {
   }
 
   /**
+   * Safely invalidates depth texture handle following OpenGL context loss and creates a fresh
+   * texture under the new active GL context.
+   */
+  fun resetGpuTextureOnContextLoss() {
+    depthTextureId = 0
+    isDepthTextureReady = false
+    initializeGpuTexture()
+  }
+
+  /**
+   * Derives exact 4x4 affine transformation matrix mapping Viewport Screen UVs to Physical Depth Texture UVs.
+   * Leverages ARCore's internal calibration via transformCoordinates2d for 100% mathematical parity.
+   */
+  fun updateDepthUvTransform(frame: Frame) {
+    try {
+      frame.transformCoordinates2d(
+        Coordinates2d.VIEW_NORMALIZED,
+        scratchScreenPts,
+        Coordinates2d.IMAGE_NORMALIZED,
+        scratchDepthUvs
+      )
+      val u0 = scratchDepthUvs[0]; val v0 = scratchDepthUvs[1]
+      val u1 = scratchDepthUvs[2]; val v1 = scratchDepthUvs[3]
+      val u2 = scratchDepthUvs[4]; val v2 = scratchDepthUvs[5]
+
+      // Column-major 4x4 matrix for OpenGL / Filament shader uniforms
+      android.opengl.Matrix.setIdentityM(depthUvTransformMatrix, 0)
+      depthUvTransformMatrix[0] = u1 - u0  // m00
+      depthUvTransformMatrix[1] = v1 - v0  // m10
+      depthUvTransformMatrix[4] = u2 - u0  // m01
+      depthUvTransformMatrix[5] = v2 - v0  // m11
+      depthUvTransformMatrix[12] = u0      // m03 (tx)
+      depthUvTransformMatrix[13] = v0      // m13 (ty)
+    } catch (_: Throwable) {
+      android.opengl.Matrix.setIdentityM(depthUvTransformMatrix, 0)
+    }
+  }
+
+  /**
    * Processes the current ARCore frame:
    * 1. Acquires the 16-bit depth image (matching camera frame timestamp).
    * 2. Copies raw 16-bit depth data into the GPU direct buffer and local array.
@@ -139,6 +189,9 @@ class DepthOcclusionManager {
       }
 
       if (depthImage == null) return
+
+      // Update mathematically exact view-to-depth affine UV transformation matrix
+      updateDepthUvTransform(frame)
 
       val width = depthImage.width
       val height = depthImage.height

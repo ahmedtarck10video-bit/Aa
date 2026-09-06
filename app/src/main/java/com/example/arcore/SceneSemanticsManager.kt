@@ -229,13 +229,15 @@ class SceneSemanticsManager {
           val cPlane = cImg.planes[0]
           val cIdx = py * cPlane.rowStride + px * cPlane.pixelStride
           ((cPlane.buffer.get(cIdx).toInt() and 0xFF) * 100) / 255
-        } catch (_: Exception) { 85 }
-      } ?: 85
+        } catch (_: Exception) { 0 }
+      } ?: 0
 
-      val isOutdoor = label in listOf("SKY", "BUILDING", "ROAD", "SIDEWALK", "TERRAIN", "TREE")
+      // Strictly reject low-confidence samples (< 60%) to prevent false classifications
+      val effectiveLabel = if (confidencePct < 60) "LOW_CONFIDENCE" else label
+      val isOutdoor = effectiveLabel in listOf("SKY", "BUILDING", "ROAD", "SIDEWALK", "TERRAIN", "TREE")
 
       SemanticQueryResult(
-        label = label,
+        label = effectiveLabel,
         confidencePercent = confidencePct,
         isOutdoor = isOutdoor,
         xNormalized = normX,
@@ -250,7 +252,8 @@ class SceneSemanticsManager {
   }
 
   fun getSemanticLabelAt(frame: Frame, normX: Float, normY: Float): String {
-    return querySemanticAtViewport(frame, normX, normY).label
+    val res = querySemanticAtViewport(frame, normX, normY)
+    return if (res.confidencePercent >= 60) res.label else "LOW_CONFIDENCE"
   }
 
   /**

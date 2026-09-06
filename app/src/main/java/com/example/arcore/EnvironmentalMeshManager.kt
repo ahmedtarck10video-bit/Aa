@@ -567,23 +567,18 @@ class EnvironmentalMeshManager {
       val isLocalMeshActive = environmental3dChunks.isNotEmpty()
       // State 4: Dense Local Reconstruction (substantial local geometric coverage)
       val isDenseLocalReconstruction = isLocalMeshActive && localMeshTris >= 300 && localMeshArea >= 3.0f
-      // State 5: Full Scene Reconstruction (requires comprehensive measurable spatial coverage across wide room footprint)
-      val isFull3dScene = isDenseLocalReconstruction &&
-                          environmental3dChunks.size >= 12 &&
-                          localMeshArea >= 10.0f &&
-                          localMeshTris >= 1500 &&
-                          spanX >= 2.5f &&
-                          spanZ >= 2.5f &&
-                          hasFloor &&
-                          (hasWall && hasTable)
+      // Native Scene Reconstruction: ARCore provides local depth mesh and streetscape geometry.
+      // Do not overclaim threshold-based depth mesh as native full-room scene reconstruction.
+      val isFull3dScene = false
 
       val reconstructionStage = when {
         !isDepthSupported && !isStreetscapeActive && !isPlaneDetectionActive -> "UNSUPPORTED"
         totalChunks == 0 -> "IDLE"
+        !isLocalMeshActive && isStreetscapeActive -> "ARCORE_STREETSCAPE_GEOMETRY"
         !isLocalMeshActive -> "PLANE_DETECTION_ONLY"
-        !isDenseLocalReconstruction -> "LOCAL_SURFACE_MESH"
-        !isFull3dScene -> "PARTIAL_3D_SCENE_RECONSTRUCTION"
-        else -> "FULL_3D_SCENE_RECONSTRUCTION"
+        !isDenseLocalReconstruction -> "PARTIAL_LOCAL_DEPTH_MESH"
+        isStreetscapeActive -> "ARCORE_STREETSCAPE_GEOMETRY"
+        else -> "DENSE_LOCAL_MESH"
       }
 
       val semanticsSource = if (usedMlSemantics) "ARCORE_ML_SEMANTICS" else "GEOMETRIC_ORIENTATION_ESTIMATE"
@@ -635,16 +630,18 @@ class EnvironmentalMeshManager {
         semanticsManager.getSemanticLabelAt(frame, normX, normY)
       } catch (_: Exception) { "UNLABELED" }
 
-      when (mlLabel.uppercase()) {
-        "FLOOR", "ROAD", "SIDEWALK", "TERRAIN" -> return MeshSurfaceCategory.FLOOR
-        "WALL", "BUILDING", "STRUCTURE" -> return MeshSurfaceCategory.WALL
-        "CEILING", "SKY" -> return MeshSurfaceCategory.CEILING
-        "TABLE" -> return MeshSurfaceCategory.TABLE_SURFACE
-        "DESK", "COUNTER" -> return MeshSurfaceCategory.DESK_OR_COUNTER
-        "CHAIR", "COUCH", "BED" -> return MeshSurfaceCategory.GENERIC_OBSTACLE
-        "OBJECT" -> {
-          // Do NOT classify generic OBJECT as DESK_OR_COUNTER; verify geometric orientation
-          return classifyTriangleCategory(p0, p1, p2)
+      if (mlLabel != "UNLABELED" && mlLabel != "UNKNOWN" && mlLabel != "LOW_CONFIDENCE") {
+        when (mlLabel.uppercase()) {
+          "FLOOR", "ROAD", "SIDEWALK", "TERRAIN" -> return MeshSurfaceCategory.FLOOR
+          "WALL", "BUILDING", "STRUCTURE" -> return MeshSurfaceCategory.WALL
+          "CEILING", "SKY" -> return MeshSurfaceCategory.CEILING
+          "TABLE" -> return MeshSurfaceCategory.TABLE_SURFACE
+          "DESK", "COUNTER" -> return MeshSurfaceCategory.DESK_OR_COUNTER
+          "CHAIR", "COUCH", "BED" -> return MeshSurfaceCategory.GENERIC_OBSTACLE
+          "OBJECT" -> {
+            // Do NOT classify generic OBJECT as DESK_OR_COUNTER; verify geometric orientation
+            return classifyTriangleCategory(p0, p1, p2)
+          }
         }
       }
     }
