@@ -334,7 +334,11 @@ class SpatialSurfaceView @JvmOverloads constructor(
         if (currentTex != 0) {
           arCoreSessionManager.setCameraTextureName(currentTex)
         }
-        (context as? Activity)?.let { arCoreSessionManager.resumeSession(it) }
+        try {
+          (context as? Activity)?.let { arCoreSessionManager.resumeSession(it) }
+        } catch (t: Throwable) {
+          Log.w("SpatialSurfaceView", "Notice resuming ARCore session: ${t.message}")
+        }
         startRendering()
       }
     }

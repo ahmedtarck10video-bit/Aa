@@ -215,7 +215,7 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
 
   init {
     setEGLContextClientVersion(2)
-    setEGLConfigChooser(8, 8, 8, 8, 16, 0)
+    setEGLConfigChooser(false)
     preserveEGLContextOnPause = true
     setRenderer(this)
     renderMode = RENDERMODE_WHEN_DIRTY
@@ -371,13 +371,15 @@ class DualCameraGLSurfaceView @JvmOverloads constructor(
       GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
 
       // 2. Create the ONE authoritative SurfaceTexture synchronized with GL texture
+      // Using SurfaceTexture(false) detached pattern avoids deprecated SurfaceTexture(int) which
+      // triggers internal eglQueryContext calls in emulator translation layers.
       val st = try {
-        SurfaceTexture(textureId)
-      } catch (e: Exception) {
-        Log.w(TAG, "Direct SurfaceTexture(textureId) fallback: ${e.message}")
         SurfaceTexture(false).apply {
           attachToGLContext(textureId)
         }
+      } catch (e: Exception) {
+        Log.w(TAG, "Detached SurfaceTexture fallback: ${e.message}")
+        SurfaceTexture(textureId)
       }
       st.setDefaultBufferSize(viewWidth, viewHeight)
       st.setOnFrameAvailableListener(this)

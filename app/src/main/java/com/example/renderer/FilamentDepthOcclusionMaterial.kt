@@ -77,7 +77,7 @@ class FilamentDepthOcclusionMaterial {
 
               // Per-fragment physical-vs-virtual depth comparison
               if (materialParams.u_occlusionEnabled > 0.5) {
-                  vec2 screenCoord = getNormalizedViewportCoord();
+                  vec2 screenCoord = getNormalizedViewportCoord().xy;
                   vec4 depthUvHomogeneous = materialParams.u_depthUvTransform * vec4(screenCoord, 0.0, 1.0);
                   vec2 depthUv = depthUvHomogeneous.xy / depthUvHomogeneous.w;
 

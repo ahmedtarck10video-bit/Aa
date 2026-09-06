@@ -228,15 +228,42 @@ class ArCoreSessionManager(private val context: Context) {
   fun setupSession(activity: Activity): Boolean {
     if (session != null) return true
 
+    if (!isArCorePackageInstalled()) {
+      Log.i(TAG, "Google Play Services for AR (com.google.ar.core) is not installed on this device.")
+      isSupported = false
+      isConfigured = false
+      return false
+    }
+
     return try {
       val installStatus = try {
         ArCoreApk.getInstance().requestInstall(activity, userRequestedInstall)
-      } catch (e: Exception) {
-        ArCoreApk.InstallStatus.INSTALLED
+      } catch (e: UnavailableUserDeclinedInstallationException) {
+        Log.w(TAG, "User declined ARCore installation")
+        userRequestedInstall = false
+        isSupported = false
+        return false
+      } catch (e: UnavailableDeviceNotCompatibleException) {
+        Log.w(TAG, "Device not compatible with ARCore: ${e.message}")
+        userRequestedInstall = false
+        isSupported = false
+        return false
+      } catch (t: Throwable) {
+        Log.w(TAG, "ARCore requestInstall check failed: ${t.message}")
+        userRequestedInstall = false
+        isSupported = false
+        return false
       }
+
       when (installStatus) {
         ArCoreApk.InstallStatus.INSTALLED -> {
-          val newSession = Session(activity)
+          val newSession = try {
+            Session(activity)
+          } catch (t: Throwable) {
+            Log.w(TAG, "ARCore Session instantiation failed: ${t.message}")
+            isSupported = false
+            return false
+          }
           val config = Config(newSession)
 
           // Enable Horizontal and Vertical Plane detection
@@ -355,6 +382,10 @@ class ArCoreSessionManager(private val context: Context) {
 
   fun resumeSession(activity: Activity): Boolean {
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+      return false
+    }
+
+    if (!isArCorePackageInstalled()) {
       return false
     }
 
