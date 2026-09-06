@@ -116,8 +116,26 @@ class ArCoreGeospatialManager {
    * Updates Earth localization and VPS telemetry from current ARCore session.
    * Separates Earth Tracking State from VPS Availability.
    */
-  fun updateGeospatialState(session: Session) {
-    val earth = session.earth ?: return
+  fun updateGeospatialState(session: Session?) {
+    if (session == null) {
+      status = status.copy(
+        earthState = "SESSION_UNAVAILABLE",
+        trackingState = "STOPPED",
+        vpsAvailability = "UNAVAILABLE",
+        guidanceMessage = "ARCore session unavailable"
+      )
+      return
+    }
+    val earth = session.earth
+    if (earth == null) {
+      status = status.copy(
+        earthState = "SESSION_UNAVAILABLE",
+        trackingState = "STOPPED",
+        vpsAvailability = "UNAVAILABLE",
+        guidanceMessage = "ARCore Earth tracking unavailable"
+      )
+      return
+    }
     try {
       val earthTracking = earth.trackingState
       val trackingName = earthTracking.name

@@ -314,7 +314,6 @@ class FilamentEngineHolder(private val context: Context) {
       // Accurately distinguish texture upload/binding from true per-fragment shader occlusion
       isDepthTextureBoundToPipeline = filamentDepthTexture != null && isReady && textureId != 0
 
-      var shaderOcclusionExecuting = false
       if (isDepthTextureBoundToPipeline && depthOcclusionMaterialHelper.isShaderCompiledAndVerified) {
         filamentDepthTexture?.let { tex ->
           depthTextureSampler?.let { sampler ->
@@ -328,13 +327,35 @@ class FilamentEngineHolder(private val context: Context) {
               toleranceMeters = 0.04f,
               isEnabled = true
             )
-            shaderOcclusionExecuting = depthOcclusionMaterialHelper.isOcclusionShaderExecuting
           }
         }
-      } else if (boundDepthShaderCount > 0) {
-        shaderOcclusionExecuting = true
       }
 
+      // Verify whether the actual 3D renderables in the scene are using the verified occlusion material/shader
+      var verifiedRenderablesExecutingShader = 0
+      for (entity in allEntities) {
+        val inst = rm.getInstance(entity)
+        if (inst != 0) {
+          val primCount = rm.getPrimitiveCount(inst)
+          for (prim in 0 until primCount) {
+            val matInst = rm.getMaterialInstanceAt(inst, prim)
+            if (matInst != null) {
+              val isOcclusionMat = (matInst == depthOcclusionMaterialHelper.materialInstance)
+              val matDef = matInst.material
+              val hasShaderDepthParam = (matDef.hasParameter("physicalDepthTexture") || matDef.hasParameter("depthTexture"))
+              val isExecuting = (isOcclusionMat && depthOcclusionMaterialHelper.isOcclusionShaderExecuting) ||
+                  (hasShaderDepthParam && isDepthTextureBoundToPipeline && boundDepthShaderCount > 0)
+              if (isExecuting) {
+                verifiedRenderablesExecutingShader++
+              }
+            }
+          }
+        }
+      }
+
+      // STRICT REQUIREMENT: Only report isGpuFragmentOcclusionActive = true when the actual 3D
+      // renderables are using the verified occlusion material/shader.
+      val shaderOcclusionExecuting = verifiedRenderablesExecutingShader > 0
       isGpuFragmentOcclusionActive = isDepthTextureBoundToPipeline && shaderOcclusionExecuting
       isGpuDepthOcclusionActive = isGpuFragmentOcclusionActive
     } else {

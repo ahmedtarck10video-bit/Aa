@@ -35,10 +35,10 @@ jobs:
       - name: Prepare environment configuration
         run: |
           if [ ! -f .env.example ]; then
-            echo "# Environment Variables" > .env.example
+            echo "GEMINI_API_KEY=your_api_key_here" > .env.example
           fi
           if [ ! -f .env ]; then
-            touch .env
+            echo "GEMINI_API_KEY=your_api_key_here" > .env
           fi
 
       - name: Verify and install required Android SDK

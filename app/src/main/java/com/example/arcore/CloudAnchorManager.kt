@@ -121,6 +121,8 @@ class CloudAnchorManager(context: Context? = null) {
     private set
   var isRealtimeBackendConnected: Boolean = false
     private set
+  var isCrossDeviceValidated: Boolean = false
+    private set
 
   val isMultiplayerActive: Boolean
     get() = isRealtimeBackendConnected && activeSharedExhibit != null
@@ -370,6 +372,11 @@ class CloudAnchorManager(context: Context? = null) {
 
         when (state) {
           Anchor.CloudAnchorState.SUCCESS -> {
+            val currentDeviceId = "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}"
+            val isRemoteHost = activeSharedExhibit != null && activeSharedExhibit?.hostDeviceId != currentDeviceId
+            if (isRemoteHost) {
+              isCrossDeviceValidated = true
+            }
             val successRecord = CloudAnchorRecord(
               cloudAnchorId = cloudAnchorId,
               anchor = anchor,
@@ -468,5 +475,6 @@ class CloudAnchorManager(context: Context? = null) {
     activeRecords.values.forEach { it.anchor?.detach() }
     activeRecords.clear()
     activeSharedExhibit = null
+    isCrossDeviceValidated = false
   }
 }

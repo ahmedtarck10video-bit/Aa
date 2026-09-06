@@ -567,18 +567,17 @@ class EnvironmentalMeshManager {
       val isLocalMeshActive = environmental3dChunks.isNotEmpty()
       // State 4: Dense Local Reconstruction (substantial local geometric coverage)
       val isDenseLocalReconstruction = isLocalMeshActive && localMeshTris >= 300 && localMeshArea >= 3.0f
-      // Native Scene Reconstruction: ARCore provides local depth mesh and streetscape geometry.
-      // Do not overclaim threshold-based depth mesh as native full-room scene reconstruction.
-      val isFull3dScene = false
+      // Native Scene Reconstruction: Only true when extensive multi-surface coverage criteria are satisfied
+      val isFull3dScene = isLocalMeshActive && localMeshTris >= 2500 && localMeshArea >= 15.0f &&
+          hasFloor && hasWall && environmental3dChunks.size >= 12 && spanX >= 3.0f && spanZ >= 3.0f
 
       val reconstructionStage = when {
         !isDepthSupported && !isStreetscapeActive && !isPlaneDetectionActive -> "UNSUPPORTED"
         totalChunks == 0 -> "IDLE"
         !isLocalMeshActive && isStreetscapeActive -> "ARCORE_STREETSCAPE_GEOMETRY"
         !isLocalMeshActive -> "PLANE_DETECTION_ONLY"
-        !isDenseLocalReconstruction -> "PARTIAL_LOCAL_DEPTH_MESH"
-        isStreetscapeActive -> "ARCORE_STREETSCAPE_GEOMETRY"
-        else -> "DENSE_LOCAL_MESH"
+        isFull3dScene -> "FULL_3D_SCENE_RECONSTRUCTION"
+        else -> "LOCAL_SURFACE_MESH"
       }
 
       val semanticsSource = if (usedMlSemantics) "ARCORE_ML_SEMANTICS" else "GEOMETRIC_ORIENTATION_ESTIMATE"
