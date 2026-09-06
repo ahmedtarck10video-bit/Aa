@@ -389,7 +389,7 @@ class SpatialViewModel(application: Application) : AndroidViewModel(application)
         hasLocationPermission = trackingData.geospatialStatus.locationPermissionGranted,
         isEarthTrackingActive = trackingData.geospatialStatus.trackingState == "TRACKING",
         isVpsLocalized = trackingData.geospatialStatus.isVpsLocalized,
-        isGeospatialActive = trackingData.geospatialStatus.isEnabled && trackingData.geospatialStatus.trackingState == "TRACKING",
+        isGeospatialActive = trackingData.geospatialStatus.isSupported && trackingData.geospatialStatus.isEnabled && trackingData.geospatialStatus.trackingState == "TRACKING",
         earthTrackingState = when {
           !trackingData.geospatialStatus.isSupported -> "UNSUPPORTED"
           !trackingData.geospatialStatus.locationPermissionGranted -> "PERMISSION REQUIRED"
@@ -407,6 +407,8 @@ class SpatialViewModel(application: Application) : AndroidViewModel(application)
           else -> "LOCALIZING..."
         },
         cloudAnchorsCount = trackingData.cloudAnchorsCount,
+        isCrossDeviceResolutionConfirmed = trackingData.isCrossDeviceResolutionConfirmed,
+        cloudAnchorCrossDeviceState = trackingData.cloudAnchorCrossDeviceState,
         dominantSemanticLabel = when {
           !trackingData.semanticsTelemetry.isSemanticModeSupported -> "UNSUPPORTED"
           trackingData.semanticsTelemetry.dominantConfidencePercent > 0 ->

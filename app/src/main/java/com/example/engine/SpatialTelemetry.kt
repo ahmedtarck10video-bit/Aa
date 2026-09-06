@@ -44,6 +44,8 @@ data class TelemetryState(
   val cloudAnchorsCount: Int = 0,
   val localAnchorsCount: Int = 0,
   val pendingCloudAnchorsCount: Int = 0,
+  val isCrossDeviceResolutionConfirmed: Boolean = false,
+  val cloudAnchorCrossDeviceState: String = "LOCAL_ONLY",
   val isRealtimeBackendConnected: Boolean = false,
   val isMultiplayerActive: Boolean = false,
   val isOnlineMultiplayerActive: Boolean = false,

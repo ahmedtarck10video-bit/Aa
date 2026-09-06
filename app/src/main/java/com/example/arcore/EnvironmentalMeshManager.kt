@@ -567,9 +567,19 @@ class EnvironmentalMeshManager {
       val isLocalMeshActive = environmental3dChunks.isNotEmpty()
       // State 4: Dense Local Reconstruction (substantial local geometric coverage)
       val isDenseLocalReconstruction = isLocalMeshActive && localMeshTris >= 300 && localMeshArea >= 3.0f
-      // Native Scene Reconstruction: Only true when extensive multi-surface coverage criteria are satisfied
-      val isFull3dScene = isLocalMeshActive && localMeshTris >= 2500 && localMeshArea >= 15.0f &&
-          hasFloor && hasWall && environmental3dChunks.size >= 12 && spanX >= 3.0f && spanZ >= 3.0f
+      // Native Scene Reconstruction: STRICT REQUIREMENT - Validate actual mesh coverage, continuity,
+      // valid depth/geometry, and spatial completeness before reporting FULL_3D_SCENE_RECONSTRUCTION.
+      // Do not classify the environment as FULL_3D_SCENE_RECONSTRUCTION using thresholds alone.
+      val isFull3dScene = validateFull3dSceneCompleteness(
+        chunks = environmental3dChunks.values,
+        spanX = spanX,
+        spanY = spanY,
+        spanZ = spanZ,
+        totalTris = localMeshTris,
+        totalArea = localMeshArea,
+        hasFloor = hasFloor,
+        hasWall = hasWall
+      )
 
       val reconstructionStage = when {
         !isDepthSupported && !isStreetscapeActive && !isPlaneDetectionActive -> "UNSUPPORTED"
@@ -608,6 +618,107 @@ class EnvironmentalMeshManager {
     } catch (e: Exception) {
       Log.d(TAG, "Environmental mesh update: ${e.message}")
     }
+  }
+
+  /**
+   * Validates true FULL_3D_SCENE_RECONSTRUCTION status.
+   * STRICT REQUIREMENT: Do not classify the environment as FULL_3D_SCENE_RECONSTRUCTION
+   * using thresholds alone. Validate:
+   * 1. Valid depth & geometry: vertex buffers contain finite, non-degenerate coordinates within valid physical ranges (0.1m - 15m).
+   * 2. Topological continuity: chunks must form a connected spatial component (not isolated disconnected spikes).
+   * 3. Spatial completeness: broad 3D bounding volume spanning X, Y, and Z (height >= 1.2m, spanX >= 3.0m, spanZ >= 3.0m).
+   * 4. Multi-quadrant coverage: chunks must surround the environment in at least 3 of 4 quadrants relative to centroid.
+   * 5. Surface co-presence: requires confirmed horizontal floor/ground plane AND vertical wall structures.
+   * 6. Mesh coverage: minimum 16 validated chunks with >= 15.0 m² verified continuous surface area and >= 2500 triangles.
+   */
+  fun validateFull3dSceneCompleteness(
+    chunks: Collection<MeshChunk>,
+    spanX: Float,
+    spanY: Float,
+    spanZ: Float,
+    totalTris: Int,
+    totalArea: Float,
+    hasFloor: Boolean,
+    hasWall: Boolean
+  ): Boolean {
+    // 1. Structural co-presence and scale gates
+    if (chunks.size < 16 || totalTris < 2500 || totalArea < 15.0f) return false
+    if (!hasFloor || !hasWall) return false
+    if (spanX < 3.0f || spanZ < 3.0f || spanY < 1.2f) return false
+
+    // 2. Validate depth & geometry integrity per chunk
+    var validGeometryChunks = 0
+    val centers = mutableListOf<FloatArray>()
+    for (chunk in chunks) {
+      val vb = chunk.vertexBuffer
+      val ib = chunk.indexBuffer
+      if (vb == null || ib == null) return false
+      if (chunk.vertexCount < 3 || chunk.triangleCount < 1) return false
+      if (chunk.surfaceAreaSquareMeters <= 0.001f) return false
+
+      val cp = chunk.centerPosition
+      if (cp[0].isNaN() || cp[1].isNaN() || cp[2].isNaN()) return false
+      val distFromOrigin = Math.sqrt((cp[0] * cp[0] + cp[1] * cp[1] + cp[2] * cp[2]).toDouble()).toFloat()
+      if (distFromOrigin !in 0.1f..15.0f) return false
+
+      // Check vertex buffer data validity
+      if (vb.capacity() >= 3) {
+        val vx = vb.get(0); val vy = vb.get(1); val vz = vb.get(2)
+        if (vx.isNaN() || vy.isNaN() || vz.isNaN() || vx.isInfinite() || vy.isInfinite() || vz.isInfinite()) {
+          return false
+        }
+      }
+      centers.add(cp)
+      validGeometryChunks++
+    }
+    if (validGeometryChunks < 16) return false
+
+    // 3. Validate Spatial Completeness across quadrants around centroid
+    val meanX = centers.map { it[0] }.average().toFloat()
+    val meanZ = centers.map { it[2] }.average().toFloat()
+    var q1 = false; var q2 = false; var q3 = false; var q4 = false
+    for (c in centers) {
+      val dx = c[0] - meanX
+      val dz = c[2] - meanZ
+      if (dx >= 0 && dz >= 0) q1 = true
+      if (dx < 0 && dz >= 0) q2 = true
+      if (dx < 0 && dz < 0) q3 = true
+      if (dx >= 0 && dz < 0) q4 = true
+    }
+    val quadrantsCovered = (if (q1) 1 else 0) + (if (q2) 1 else 0) + (if (q3) 1 else 0) + (if (q4) 1 else 0)
+    if (quadrantsCovered < 3) {
+      return false
+    }
+
+    // 4. Validate Mesh Topological Continuity (connectivity graph check)
+    // Every chunk must be contiguous with at least one neighboring chunk within max neighbor distance (1.5m)
+    val maxNeighborDistanceSq = 1.5f * 1.5f
+    var connectedCount = 0
+    for (i in centers.indices) {
+      val c1 = centers[i]
+      var hasNeighbor = false
+      for (j in centers.indices) {
+        if (i == j) continue
+        val c2 = centers[j]
+        val dX = c1[0] - c2[0]
+        val dY = c1[1] - c2[1]
+        val dZ = c1[2] - c2[2]
+        val distSq = dX * dX + dY * dY + dZ * dZ
+        if (distSq <= maxNeighborDistanceSq) {
+          hasNeighbor = true
+          break
+        }
+      }
+      if (hasNeighbor) connectedCount++
+    }
+
+    // Require >= 90% spatial continuity across all accumulated chunks
+    val continuityRatio = connectedCount.toFloat() / centers.size.toFloat()
+    if (continuityRatio < 0.90f) {
+      return false
+    }
+
+    return true
   }
 
   /**

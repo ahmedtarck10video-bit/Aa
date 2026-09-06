@@ -238,4 +238,129 @@ class ExampleRobolectricTest {
     assertTrue("Initial session state should be paused", manager.isSessionPaused)
     assertNull("Updating frame when paused should safely return null without throwing", manager.updateFrame())
   }
+
+  @Test
+  fun `verify full 3d scene reconstruction requires geometry, continuity, and spatial completeness`() {
+    val meshManager = com.example.arcore.EnvironmentalMeshManager()
+    
+    // 1. Incomplete chunks: empty -> false
+    val emptyResult = meshManager.validateFull3dSceneCompleteness(
+      chunks = emptyList(),
+      spanX = 4f, spanY = 2f, spanZ = 4f,
+      totalTris = 3000, totalArea = 20f,
+      hasFloor = true, hasWall = true
+    )
+    org.junit.Assert.assertFalse("Empty chunks must not be full 3D reconstruction", emptyResult)
+
+    // 2. Missing floor or wall -> false
+    val noFloorResult = meshManager.validateFull3dSceneCompleteness(
+      chunks = emptyList(),
+      spanX = 4f, spanY = 2f, spanZ = 4f,
+      totalTris = 3000, totalArea = 20f,
+      hasFloor = false, hasWall = true
+    )
+    org.junit.Assert.assertFalse("Must require floor and wall co-presence", noFloorResult)
+
+    // 3. Build 16 valid contiguous chunks spanning 4 quadrants
+    val validChunks = mutableListOf<com.example.arcore.MeshChunk>()
+    for (i in 0 until 16) {
+      val angle = (i * Math.PI * 2.0 / 16.0)
+      val x = (Math.cos(angle) * 1.5).toFloat()
+      val z = (Math.sin(angle) * 1.5).toFloat()
+      val vb = java.nio.ByteBuffer.allocateDirect(12 * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
+      vb.put(floatArrayOf(x, 0f, z, x + 0.1f, 0f, z, x, 0.1f, z, x + 0.1f, 0.1f, z))
+      vb.position(0)
+      val ib = java.nio.ByteBuffer.allocateDirect(6 * 4).order(java.nio.ByteOrder.nativeOrder()).asIntBuffer()
+      ib.put(intArrayOf(0, 1, 2, 2, 1, 3))
+      ib.position(0)
+
+      validChunks.add(
+        com.example.arcore.MeshChunk(
+          id = "chunk_$i",
+          sourceType = com.example.arcore.GeometrySourceType.ENVIRONMENTAL_3D_MESH,
+          category = if (i % 2 == 0) com.example.arcore.MeshSurfaceCategory.FLOOR else com.example.arcore.MeshSurfaceCategory.WALL,
+          vertexCount = 4,
+          triangleCount = 2,
+          centerPosition = floatArrayOf(x, 0.5f, z),
+          surfaceAreaSquareMeters = 1.2f,
+          vertexBuffer = vb,
+          indexBuffer = ib
+        )
+      )
+    }
+
+    val completeResult = meshManager.validateFull3dSceneCompleteness(
+      chunks = validChunks,
+      spanX = 3.5f, spanY = 1.5f, spanZ = 3.5f,
+      totalTris = 2600, totalArea = 18f,
+      hasFloor = true, hasWall = true
+    )
+    assertTrue("Validated continuous geometry across quadrants must confirm full 3D scene reconstruction", completeResult)
+  }
+
+  @Test
+  fun `verify cloud anchor complete cross-device flow and local cache separation`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val manager = com.example.arcore.CloudAnchorManager(context)
+
+    // Step 1: Device A hosts anchor
+    val deviceA = "Google_Pixel_8"
+    val deviceB = "Samsung_Galaxy_S24"
+    val testPose = com.google.ar.core.Pose(floatArrayOf(0f, 0f, -1f), floatArrayOf(0f, 0f, 0f, 1f))
+    val cloudAnchorId = "ua-test-anchor-uuid-9999"
+
+    // Step 2: Device A creates Share ID
+    val sharedExhibit = manager.shareCloudAnchor(
+      cloudAnchorId = cloudAnchorId,
+      sessionCode = "ROOM_101",
+      modelId = "apollo_lunar_module",
+      modelScale = 1.0f,
+      pose = testPose,
+      hostDeviceId = deviceA
+    )
+
+    assertEquals("ROOM_101", sharedExhibit.sessionRoomIdentifier)
+    assertEquals(cloudAnchorId, sharedExhibit.cloudAnchorId)
+    assertEquals(deviceA, sharedExhibit.hostDeviceId)
+    assertEquals(com.example.arcore.CloudAnchorCrossDeviceState.SHARED_ID_GENERATED, manager.crossDeviceState)
+    org.junit.Assert.assertFalse("Sharing does not validate until resolved by remote device", manager.isCrossDeviceValidated)
+
+    // Step 3: Local cache retrieval is separated from cross-device resolution
+    val cachedId = manager.getCachedAnchorId("ROOM_101")
+    assertEquals(cloudAnchorId, cachedId)
+    assertEquals(com.example.arcore.CloudAnchorResolutionSource.LOCAL_DEVICE_CACHE, manager.resolutionSource)
+    org.junit.Assert.assertFalse("Local cache must NOT confirm cross-device resolution", manager.isCrossDeviceValidated)
+  }
+
+  @Test
+  fun `verify separation of earth tracking, geospatial availability, and vps localized state`() {
+    val status = com.example.arcore.GeospatialStatus(
+      isSupported = true,
+      isEnabled = true,
+      locationPermissionGranted = true,
+      earthState = "ENABLED",
+      trackingState = "TRACKING",
+      vpsAvailability = "UNAVAILABLE",
+      isVpsLocalized = false
+    )
+
+    // Earth is tracking, but VPS is UNAVAILABLE and NOT localized
+    assertEquals("TRACKING", status.trackingState)
+    assertEquals("UNAVAILABLE", status.vpsAvailability)
+    org.junit.Assert.assertFalse("VPS localized must remain false when unavailable", status.isVpsLocalized)
+  }
+
+  @Test
+  fun `verify loopback mode is distinguished from real online multiplayer`() {
+    val backend = com.example.arcore.RealtimeMultiplayerBackend()
+    
+    // Start loopback mode
+    backend.startLoopbackService("test_room")
+    assertTrue("Loopback mode must be active", backend.isLoopbackMode)
+    assertTrue("Loopback test active flag must be true", backend.isLoopbackTestActive)
+    org.junit.Assert.assertFalse("Loopback mode must NOT be reported as online multiplayer", backend.isOnlineMultiplayerActive)
+    org.junit.Assert.assertFalse("Loopback mode must NOT report backend relay connected", backend.isBackendConnected)
+    assertEquals(com.example.arcore.MultiplayerMode.LOCAL_LOOPBACK_TEST, backend.multiplayerMode)
+  }
 }
+

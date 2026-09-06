@@ -31,6 +31,28 @@ enum class CloudAnchorLifecycleState {
 }
 
 /**
+ * Distinguishes local vs remote origins of a resolved Cloud Anchor.
+ */
+enum class CloudAnchorResolutionSource {
+  LOCAL_DEVICE_HOSTED,
+  LOCAL_DEVICE_CACHE,
+  CROSS_DEVICE_REMOTE_RESOLVED
+}
+
+/**
+ * Complete lifecycle verification states for cross-device Cloud Anchor sharing:
+ * Device A (Host) -> Cloud Anchor ID -> Share ID -> Device B (Client) -> Confirmed Resolve.
+ */
+enum class CloudAnchorCrossDeviceState {
+  LOCAL_ONLY,
+  HOSTED_DEVICE_A,
+  SHARED_ID_GENERATED,
+  RESOLVING_DEVICE_B,
+  CONFIRMED_CROSS_DEVICE_RESOLVED,
+  CROSS_DEVICE_RESOLUTION_FAILED
+}
+
+/**
  * Shared Spatial AR State synchronized between host and client devices (Decoupled Multiplayer Layer).
  * NOTE: Cloud Anchors provide shared spatial persistence across devices.
  * Cloud Anchor hosting/resolving alone is not a complete multiplayer system.
@@ -122,6 +144,10 @@ class CloudAnchorManager(context: Context? = null) {
   var isRealtimeBackendConnected: Boolean = false
     private set
   var isCrossDeviceValidated: Boolean = false
+    private set
+  var crossDeviceState: CloudAnchorCrossDeviceState = CloudAnchorCrossDeviceState.LOCAL_ONLY
+    private set
+  var resolutionSource: CloudAnchorResolutionSource? = null
     private set
 
   val isMultiplayerActive: Boolean
@@ -260,6 +286,9 @@ class CloudAnchorManager(context: Context? = null) {
                 ttlDays = ttlDays
               )
               activeRecords[cloudAnchorId] = record
+              crossDeviceState = CloudAnchorCrossDeviceState.HOSTED_DEVICE_A
+              resolutionSource = CloudAnchorResolutionSource.LOCAL_DEVICE_HOSTED
+              isCrossDeviceValidated = false
               onStatusChange(record)
             } else {
               val record = initialRecord.copy(
@@ -325,6 +354,7 @@ class CloudAnchorManager(context: Context? = null) {
   fun resolveCloudAnchor(
     session: Session,
     cloudAnchorId: String,
+    clientDeviceId: String = "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}",
     timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     onStatusChange: (CloudAnchorRecord) -> Unit
   ): String {
@@ -356,6 +386,7 @@ class CloudAnchorManager(context: Context? = null) {
           errorMessage = "Cloud Anchor resolving timed out after ${timeoutMs / 1000}s."
         )
         activeRecords[cloudAnchorId] = timedOut
+        crossDeviceState = CloudAnchorCrossDeviceState.CROSS_DEVICE_RESOLUTION_FAILED
         onStatusChange(timedOut)
         Log.w(TAG, "Resolving timed out for anchor $cloudAnchorId")
       }
@@ -372,10 +403,20 @@ class CloudAnchorManager(context: Context? = null) {
 
         when (state) {
           Anchor.CloudAnchorState.SUCCESS -> {
-            val currentDeviceId = "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}"
-            val isRemoteHost = activeSharedExhibit != null && activeSharedExhibit?.hostDeviceId != currentDeviceId
+            val isRemoteHost = activeSharedExhibit != null &&
+                !activeSharedExhibit?.hostDeviceId.isNullOrEmpty() &&
+                activeSharedExhibit?.hostDeviceId != clientDeviceId
+
             if (isRemoteHost) {
               isCrossDeviceValidated = true
+              crossDeviceState = CloudAnchorCrossDeviceState.CONFIRMED_CROSS_DEVICE_RESOLVED
+              resolutionSource = CloudAnchorResolutionSource.CROSS_DEVICE_REMOTE_RESOLVED
+              Log.i(TAG, "CONFIRMED cross-device resolution: Device B ($clientDeviceId) resolved anchor from Device A (${activeSharedExhibit?.hostDeviceId})")
+            } else {
+              isCrossDeviceValidated = false
+              crossDeviceState = CloudAnchorCrossDeviceState.LOCAL_ONLY
+              resolutionSource = CloudAnchorResolutionSource.LOCAL_DEVICE_HOSTED
+              Log.i(TAG, "Resolved on local/originating device ($clientDeviceId). Local state preserved, not cross-device.")
             }
             val successRecord = CloudAnchorRecord(
               cloudAnchorId = cloudAnchorId,
@@ -386,6 +427,7 @@ class CloudAnchorManager(context: Context? = null) {
             onStatusChange(successRecord)
           }
           Anchor.CloudAnchorState.ERROR_NOT_AUTHORIZED -> {
+            crossDeviceState = CloudAnchorCrossDeviceState.CROSS_DEVICE_RESOLUTION_FAILED
             val failRecord = initialRecord.copy(
               state = CloudAnchorLifecycleState.ERROR_NOT_AUTHORIZED,
               errorMessage = "Google Cloud API key unauthorized for ARCore Cloud Anchors."
@@ -394,6 +436,7 @@ class CloudAnchorManager(context: Context? = null) {
             onStatusChange(failRecord)
           }
           Anchor.CloudAnchorState.ERROR_RESOLVING_LOCALIZATION_NO_MATCH -> {
+            crossDeviceState = CloudAnchorCrossDeviceState.CROSS_DEVICE_RESOLUTION_FAILED
             val failRecord = initialRecord.copy(
               state = CloudAnchorLifecycleState.ERROR_LOCALIZATION_FAILED,
               errorMessage = "Current camera view does not match the visual features of this Cloud Anchor."
@@ -402,6 +445,7 @@ class CloudAnchorManager(context: Context? = null) {
             onStatusChange(failRecord)
           }
           else -> {
+            crossDeviceState = CloudAnchorCrossDeviceState.CROSS_DEVICE_RESOLUTION_FAILED
             val failRecord = initialRecord.copy(
               state = CloudAnchorLifecycleState.ERROR_LOCALIZATION_FAILED,
               errorMessage = "Resolving failed: $stateName"
@@ -414,6 +458,7 @@ class CloudAnchorManager(context: Context? = null) {
     } catch (e: Exception) {
       pendingTimeouts.remove(cloudAnchorId)?.let { mainHandler.removeCallbacks(it) }
       Log.e(TAG, "Exception resolving cloud anchor: ${e.message}", e)
+      crossDeviceState = CloudAnchorCrossDeviceState.CROSS_DEVICE_RESOLUTION_FAILED
       val errRecord = initialRecord.copy(
         state = CloudAnchorLifecycleState.ERROR_SDK_UNSUPPORTED,
         errorMessage = e.message
@@ -423,6 +468,63 @@ class CloudAnchorManager(context: Context? = null) {
     }
 
     return cloudAnchorId
+  }
+
+  /**
+   * Device A -> Host Anchor -> Cloud Anchor ID -> Share ID.
+   * Generates a shareable spatial exhibit with an explicit share ID for Device B.
+   */
+  fun shareCloudAnchor(
+    cloudAnchorId: String,
+    sessionCode: String,
+    modelId: String,
+    modelScale: Float,
+    pose: Pose,
+    hostDeviceId: String = "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}"
+  ): SharedSpatialExhibit {
+    val shareId = "share_${sessionCode}_${cloudAnchorId.take(8)}"
+    val exhibit = SharedSpatialExhibit(
+      sessionRoomIdentifier = sessionCode,
+      exhibitIdentifier = shareId,
+      cloudAnchorId = cloudAnchorId,
+      hostDeviceId = hostDeviceId,
+      modelId = modelId,
+      scale = modelScale,
+      position = floatArrayOf(pose.tx(), pose.ty(), pose.tz()),
+      rotation = floatArrayOf(pose.qx(), pose.qy(), pose.qz(), pose.qw()),
+      syncTimestampMs = System.currentTimeMillis(),
+      isRealtimeBackendConnected = isRealtimeBackendConnected
+    )
+    activeSharedExhibit = exhibit
+    crossDeviceState = CloudAnchorCrossDeviceState.SHARED_ID_GENERATED
+    isCrossDeviceValidated = false
+    sharedPrefs?.edit()?.putString(sessionCode, cloudAnchorId)?.apply()
+    Log.i(TAG, "Device A shared Cloud Anchor ID $cloudAnchorId with share ID '$shareId'")
+    return exhibit
+  }
+
+  /**
+   * Device B -> Resolve Anchor using shared ID / SharedSpatialExhibit.
+   * STRICT REQUIREMENT: Only mark cross-device resolution as confirmed when Device B
+   * successfully resolves an anchor that originated from a different host device (Device A).
+   * Keep local/cache states strictly separate from confirmed cross-device resolution.
+   */
+  fun resolveSharedCloudAnchor(
+    session: Session,
+    sharedExhibit: SharedSpatialExhibit,
+    clientDeviceId: String = "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}",
+    timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    onStatusChange: (CloudAnchorRecord) -> Unit
+  ): String {
+    activeSharedExhibit = sharedExhibit
+    crossDeviceState = CloudAnchorCrossDeviceState.RESOLVING_DEVICE_B
+    return resolveCloudAnchor(
+      session = session,
+      cloudAnchorId = sharedExhibit.cloudAnchorId,
+      clientDeviceId = clientDeviceId,
+      timeoutMs = timeoutMs,
+      onStatusChange = onStatusChange
+    )
   }
 
   /**
@@ -466,7 +568,13 @@ class CloudAnchorManager(context: Context? = null) {
   }
 
   fun getCachedAnchorId(sessionCode: String): String? {
-    return sharedPrefs?.getString(sessionCode, null)
+    val cached = sharedPrefs?.getString(sessionCode, null)
+    if (cached != null) {
+      // STRICT REQUIREMENT: Keep local/cache states separate from confirmed cross-device resolution
+      resolutionSource = CloudAnchorResolutionSource.LOCAL_DEVICE_CACHE
+      isCrossDeviceValidated = false
+    }
+    return cached
   }
 
   fun clearAll() {
@@ -476,5 +584,7 @@ class CloudAnchorManager(context: Context? = null) {
     activeRecords.clear()
     activeSharedExhibit = null
     isCrossDeviceValidated = false
+    crossDeviceState = CloudAnchorCrossDeviceState.LOCAL_ONLY
+    resolutionSource = null
   }
 }

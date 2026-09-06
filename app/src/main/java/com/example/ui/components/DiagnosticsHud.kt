@@ -174,11 +174,23 @@ fun DiagnosticsHud(
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier.fillMaxWidth()
       ) {
+        val vpsStatus = when {
+          telemetry.isVpsLocalized -> "VPS: Localized"
+          telemetry.vpsAvailability == "AVAILABLE" -> "VPS: Available"
+          telemetry.isEarthTrackingActive -> "Earth: Tracking"
+          telemetry.isGeospatialActive -> "Geospatial: Active"
+          telemetry.isGeospatialEnabled -> "Earth: Localizing"
+          else -> "VPS: Unavailable"
+        }
         Text(
-          text = "Semantics: ${telemetry.dominantSemanticLabel} | VPS: ${if (telemetry.isGeospatialActive) "Active" else "Local 6DoF"}",
+          text = "Semantics: ${telemetry.dominantSemanticLabel} | $vpsStatus",
           fontFamily = FontFamily.Monospace,
           fontSize = 10.sp,
-          color = Color(0xFF38BDF8)
+          color = when {
+            telemetry.isVpsLocalized -> Color(0xFF22C55E)
+            telemetry.isEarthTrackingActive -> Color(0xFF38BDF8)
+            else -> Color(0xFF38BDF8)
+          }
         )
         Text(
           text = "Conf: ${telemetry.depthConfidenceScore.toInt()}% | ${telemetry.deviceTier.substringAfter("TIER_")}",
@@ -193,8 +205,13 @@ fun DiagnosticsHud(
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier.fillMaxWidth()
       ) {
+        val cloudStatus = when {
+          telemetry.isCrossDeviceResolutionConfirmed -> "Cloud: ${telemetry.cloudAnchorsCount} [Cross-Dev]"
+          telemetry.cloudAnchorCrossDeviceState != "LOCAL_ONLY" -> "Cloud: ${telemetry.cloudAnchorsCount} [${telemetry.cloudAnchorCrossDeviceState.take(10)}]"
+          else -> "Cloud: ${telemetry.cloudAnchorsCount}"
+        }
         Text(
-          text = "Rec: ${telemetry.arRecordingStatus} | Cloud Anchors: ${telemetry.cloudAnchorsCount}",
+          text = "Rec: ${telemetry.arRecordingStatus} | $cloudStatus",
           fontFamily = FontFamily.Monospace,
           fontSize = 10.sp,
           color = if (telemetry.arRecordingStatus == "RECORDING") Color(0xFFEF4444) else Color(0xFF94A3B8)
