@@ -697,24 +697,97 @@ class ArCoreSessionManager(private val context: Context) {
   }
 
   /**
-   * Performs hit test against detected physical planes with polygon bounds check,
-   * falling back to ARCore Instant Placement points if planes are still forming.
+   * Performs prioritized hit test enforcing stable plane acquisition:
+   * Priority: Stable Plane -> Depth-assisted hit -> Feature point / Instant Placement.
+   *
+   * Fallback methods do NOT override a valid stable plane.
+   * Prevents accidental placement caused by noisy unoriented feature points.
    */
   fun hitTest(frame: Frame, xPx: Float, yPx: Float): HitResult? {
+    if (frame.camera.trackingState != TrackingState.TRACKING) {
+      return null
+    }
+
     val hits = frame.hitTest(xPx, yPx)
-    // 1. Try detected plane with polygon bounds
+    if (hits.isEmpty()) return null
+
+    // 1. STABLE PLANE (Highest Priority):
+    // Prioritize verified polygon bounds on horizontal upward surfaces (tables, floors),
+    // followed by vertical planes (walls), with sufficient surface extent.
+    var bestPlaneHit: HitResult? = null
+    var bestPlaneScore = -1f
+
     for (hit in hits) {
       val trackable = hit.trackable
-      if (trackable is Plane && trackable.isPoseInPolygon(hit.hitPose) && trackable.trackingState == TrackingState.TRACKING) {
-        return hit
+      if (trackable is Plane && trackable.trackingState == TrackingState.TRACKING) {
+        val rootPlane = trackable.subsumedBy ?: trackable
+        if (rootPlane.trackingState == TrackingState.TRACKING) {
+          val inPolygon = rootPlane.isPoseInPolygon(hit.hitPose)
+          val area = rootPlane.extentX * rootPlane.extentZ
+          val isHorizontalUp = rootPlane.type == Plane.Type.HORIZONTAL_UPWARD_FACING
+          val isVertical = rootPlane.type == Plane.Type.VERTICAL
+
+          if (inPolygon && area >= 0.02f) {
+            val score = (if (isHorizontalUp) 100f else if (isVertical) 80f else 60f) + area.coerceAtMost(5f)
+            if (score > bestPlaneScore) {
+              bestPlaneScore = score
+              bestPlaneHit = hit
+            }
+          } else if (bestPlaneHit == null && rootPlane.isPoseInExtents(hit.hitPose) && area >= 0.04f) {
+            val score = (if (isHorizontalUp) 40f else if (isVertical) 30f else 20f) + area.coerceAtMost(3f)
+            if (score > bestPlaneScore) {
+              bestPlaneScore = score
+              bestPlaneHit = hit
+            }
+          }
+        }
       }
     }
-    // 2. Try InstantPlacementPoint for instant zero-latency pinning
-    val instantHit = hits.firstOrNull { it.trackable is com.google.ar.core.InstantPlacementPoint }
-    if (instantHit != null) {
-      return instantHit
+
+    if (bestPlaneHit != null) {
+      return bestPlaneHit
     }
-    return hits.firstOrNull()
+
+    // 2. DEPTH-ASSISTED HIT:
+    // When planes are still forming, evaluate DepthPoint within comfortable AR inspection range (0.3m - 4.5m)
+    val depthHit = hits.firstOrNull { hit ->
+      val trackable = hit.trackable
+      val isDepth = trackable != null && (trackable.javaClass.simpleName.contains("DepthPoint") || trackable is com.google.ar.core.DepthPoint)
+      isDepth && hit.distance in 0.3f..4.5f
+    }
+    if (depthHit != null) {
+      return depthHit
+    }
+
+    // 3. FEATURE POINT / INSTANT PLACEMENT:
+    // Prefer fully tracked instant placement points
+    val instantHits = hits.filter { it.trackable is com.google.ar.core.InstantPlacementPoint }
+    val fullTrackingInstant = instantHits.firstOrNull {
+      val pt = it.trackable as com.google.ar.core.InstantPlacementPoint
+      pt.trackingMethod == com.google.ar.core.InstantPlacementPoint.TrackingMethod.FULL_TRACKING
+    }
+    if (fullTrackingInstant != null) {
+      return fullTrackingInstant
+    }
+
+    val tentativeInstant = instantHits.firstOrNull()
+    if (tentativeInstant != null) {
+      return tentativeInstant
+    }
+
+    // Oriented feature points with estimated surface normal
+    val orientedPointHit = hits.firstOrNull { hit ->
+      val trackable = hit.trackable
+      if (trackable is com.google.ar.core.Point && trackable.trackingState == TrackingState.TRACKING) {
+        trackable.orientationMode == com.google.ar.core.Point.OrientationMode.ESTIMATED_SURFACE_NORMAL
+      } else false
+    }
+    if (orientedPointHit != null) {
+      return orientedPointHit
+    }
+
+    // 4. Do NOT allow accidental placement from noisy unoriented feature points
+    return null
   }
 
   fun createAnchor(hitResult: HitResult): Anchor? {

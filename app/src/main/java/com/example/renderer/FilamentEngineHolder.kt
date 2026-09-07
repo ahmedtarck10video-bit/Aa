@@ -114,8 +114,30 @@ class FilamentEngineHolder(private val context: Context) {
     private const val TAG = "FilamentEngineHolder"
 
     init {
-      Gltfio.init()
-      Filament.init()
+      try {
+        Gltfio.init()
+        Filament.init()
+      } catch (t: Throwable) {
+        Log.w(TAG, "Native Filament libraries not loaded (unit test or unsupported env): ${t.message}")
+      }
+    }
+
+    /**
+     * Pure calculation of miniature display scale factor from real-world metric dimensions.
+     * Keeps large models (e.g. 15m x 5m museum) completely visible and comfortable to inspect
+     * in the Object Mode inspection viewport (~0.85m), while preserving source asset dimensions.
+     */
+    fun calculateMiniatureScale(widthMeters: Float, heightMeters: Float, depthMeters: Float): Float {
+      val maxDim = maxOf(widthMeters, heightMeters, depthMeters)
+      if (maxDim <= 0.001f) return 1.0f
+      val targetMiniatureDim = 0.85f
+      return if (maxDim > 1.2f) {
+        (targetMiniatureDim / maxDim).coerceIn(0.005f, 1.0f)
+      } else if (maxDim in 0.001f..0.25f) {
+        (0.6f / maxDim).coerceIn(1.0f, 10.0f)
+      } else {
+        1.0f
+      }
     }
   }
 
@@ -525,6 +547,12 @@ class FilamentEngineHolder(private val context: Context) {
   var modelPhysicalDepthMeters: Float = 1.0f
     private set
 
+  fun setModelPhysicalDimensions(width: Float, height: Float, depth: Float) {
+    modelPhysicalWidthMeters = width
+    modelPhysicalHeightMeters = height
+    modelPhysicalDepthMeters = depth
+  }
+
   // Base centering offset vector (computed from bounding box)
   var baseCenterOffsetX: Float = 0f
     private set
@@ -765,8 +793,19 @@ class FilamentEngineHolder(private val context: Context) {
   }
 
   /**
+   * Dynamically calculates an appropriate miniature display scale factor in Object Mode
+   * from the model's actual bounding box dimensions.
+   * Keeps large real-world models (e.g. 15m x 5m museum) completely visible and comfortable to inspect
+   * as a miniature, while preserving the underlying source asset dimensions.
+   */
+  fun calculateObjectModeMiniatureScale(): Float {
+    return calculateMiniatureScale(modelPhysicalWidthMeters, modelPhysicalHeightMeters, modelPhysicalDepthMeters)
+  }
+
+  /**
    * Updates root transform for current primary asset in Object Mode.
-   * Model remains stable, cleanly centered, fully visible and above the bottom controls.
+   * Automatically presents large models as comfortable-to-view miniatures,
+   * cleanly centered, fully visible, while preserving rotation, zoom, and pan controls.
    */
   fun updateObjectModeTransform() {
     val eng = engine ?: return
@@ -783,8 +822,9 @@ class FilamentEngineHolder(private val context: Context) {
       if (modelPitchDegrees != 0f) {
         Matrix.rotateM(scratchModelMatrix, 0, modelPitchDegrees, 1f, 0f, 0f)
       }
-      val scale = modelScale.coerceIn(0.6f, 3.0f)
-      Matrix.scaleM(scratchModelMatrix, 0, scale, scale, scale)
+      val miniatureFactor = calculateObjectModeMiniatureScale()
+      val effectiveScale = (miniatureFactor * modelScale).coerceIn(0.005f, 15.0f)
+      Matrix.scaleM(scratchModelMatrix, 0, effectiveScale, effectiveScale, effectiveScale)
       Matrix.translateM(scratchModelMatrix, 0, baseCenterOffsetX, baseCenterOffsetY, baseCenterOffsetZ)
       tm.setTransform(rootInst, scratchModelMatrix)
     }

@@ -39,7 +39,15 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.sqrt
 
+enum class UiVisibilityState {
+  NORMAL_UI,
+  FULLSCREEN_UI
+}
+
 class SpatialViewModel(application: Application) : AndroidViewModel(application) {
+
+  private val _uiVisibilityState = MutableStateFlow(UiVisibilityState.NORMAL_UI)
+  val uiVisibilityState: StateFlow<UiVisibilityState> = _uiVisibilityState.asStateFlow()
 
   private val logger = DiagnosticsLogger(application)
 
@@ -310,6 +318,12 @@ class SpatialViewModel(application: Application) : AndroidViewModel(application)
   fun setAmbientIntensity(intensity: Float) { _ambientIntensity.value = intensity }
   fun setSunIntensity(intensity: Float) { _sunIntensity.value = intensity }
   fun setIpdMm(ipd: Float) { _ipdMm.value = ipd }
+  fun toggleFullscreenUi() {
+    _uiVisibilityState.update { current ->
+      if (current == UiVisibilityState.NORMAL_UI) UiVisibilityState.FULLSCREEN_UI else UiVisibilityState.NORMAL_UI
+    }
+  }
+  fun setUiVisibilityState(state: UiVisibilityState) { _uiVisibilityState.value = state }
 
   fun updateTelemetryFromEngine(
     fps: Float,

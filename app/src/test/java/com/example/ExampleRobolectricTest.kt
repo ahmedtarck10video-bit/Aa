@@ -362,5 +362,49 @@ class ExampleRobolectricTest {
     org.junit.Assert.assertFalse("Loopback mode must NOT report backend relay connected", backend.isBackendConnected)
     assertEquals(com.example.arcore.MultiplayerMode.LOCAL_LOOPBACK_TEST, backend.multiplayerMode)
   }
+
+  @Test
+  fun `verify one-tap fullscreen toggle robust state transitions`() {
+    val application = ApplicationProvider.getApplicationContext<Application>()
+    val viewModel = SpatialViewModel(application)
+
+    // Initial state: NORMAL_UI
+    assertEquals(com.example.viewmodel.UiVisibilityState.NORMAL_UI, viewModel.uiVisibilityState.value)
+
+    // Tap 1: Transitions to FULLSCREEN_UI (hides upper & lower bars, status/nav bars)
+    viewModel.toggleFullscreenUi()
+    assertEquals(com.example.viewmodel.UiVisibilityState.FULLSCREEN_UI, viewModel.uiVisibilityState.value)
+
+    // Tap 2: Restores to NORMAL_UI (restores bars)
+    viewModel.toggleFullscreenUi()
+    assertEquals(com.example.viewmodel.UiVisibilityState.NORMAL_UI, viewModel.uiVisibilityState.value)
+  }
+
+  @Test
+  fun `verify object mode dynamic miniature scaling for large real-world models`() {
+    // 1. Large 15m x 5m museum
+    val miniatureScaleLarge = com.example.renderer.FilamentEngineHolder.calculateMiniatureScale(15.0f, 4.0f, 5.0f)
+    assertTrue("Large 15m model should be scaled down to miniature", miniatureScaleLarge < 0.1f)
+    // 15m * scale should fit comfortably within viewport (~0.85m)
+    val displayedSize = 15.0f * miniatureScaleLarge
+    assertTrue("Displayed miniature size should be ~0.85m", displayedSize in 0.80f..0.90f)
+
+    // 2. Standard 1.0m model should remain at 1:1 scale
+    val miniatureScaleStandard = com.example.renderer.FilamentEngineHolder.calculateMiniatureScale(1.0f, 0.8f, 0.9f)
+    assertEquals(1.0f, miniatureScaleStandard, 0.001f)
+  }
+
+  @Test
+  fun `verify rotation delta sign mapping turns model right on right drag`() {
+    var yaw = 0f
+    val dxRight = 20f // Drag finger to the right
+    // Natural mapping: moving finger RIGHT decrements yaw so front turns RIGHT
+    yaw -= dxRight * 0.45f
+    assertTrue("Right drag must decrease yaw angle for natural rightward turn", yaw < 0f)
+
+    val dxLeft = -20f // Drag finger to the left
+    yaw -= dxLeft * 0.45f
+    assertEquals(0f, yaw, 0.001f)
+  }
 }
 

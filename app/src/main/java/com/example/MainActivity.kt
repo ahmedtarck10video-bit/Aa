@@ -11,8 +11,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +33,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewInAr
@@ -55,6 +62,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.example.arcore.ExhibitSource
 import com.example.engine.HapticManager
 import com.example.model.DisplayMode
@@ -70,6 +80,7 @@ import com.example.ui.components.TopModePill
 import com.example.ui.components.TrackingRecoveryCard
 import com.example.ui.theme.MyApplicationTheme
 import com.example.viewmodel.SpatialViewModel
+import com.example.viewmodel.UiVisibilityState
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -148,6 +159,29 @@ fun MixedRealityScreen(
   val telemetry by viewModel.telemetry.collectAsState()
   val nearbyExhibit by viewModel.nearbyExhibit.collectAsState()
   val arAnchors by viewModel.arAnchors.collectAsState()
+  val uiVisibilityState by viewModel.uiVisibilityState.collectAsState()
+
+  val insetsController = remember(activity) {
+    activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+  }
+
+  // Manage Android System Bars (Status & Navigation Bars) dynamically
+  LaunchedEffect(uiVisibilityState) {
+    insetsController?.let { controller ->
+      if (uiVisibilityState == UiVisibilityState.FULLSCREEN_UI) {
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+      } else {
+        controller.show(WindowInsetsCompat.Type.systemBars())
+      }
+    }
+  }
+
+  DisposableEffect(Unit) {
+    onDispose {
+      insetsController?.show(WindowInsetsCompat.Type.systemBars())
+    }
+  }
 
   // Sheet states
   val modelSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -299,8 +333,8 @@ fun MixedRealityScreen(
         .testTag("spatial_filament_canvas")
     )
 
-    // 2. Diagnostics HUD Overlay (When explicitly enabled via settings)
-    if (showDiagnostics) {
+    // 2. Diagnostics HUD Overlay (When explicitly enabled via settings and in NORMAL_UI)
+    if (showDiagnostics && uiVisibilityState == UiVisibilityState.NORMAL_UI) {
       Box(
         modifier = Modifier
           .fillMaxWidth()
@@ -322,21 +356,71 @@ fun MixedRealityScreen(
     }
 
     // 7. TOP CONTROLS: Mode Switcher Pill centered (MR | AR | Object)
+    AnimatedVisibility(
+      visible = uiVisibilityState == UiVisibilityState.NORMAL_UI,
+      enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { -it },
+      exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { -it },
+      modifier = Modifier.align(Alignment.TopCenter)
+    ) {
+      Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+          .fillMaxWidth()
+          .statusBarsPadding()
+          .padding(top = 12.dp)
+      ) {
+        TopModePill(
+          currentMode = displayMode,
+          onModeSelected = { newMode ->
+            hapticManager.performHeavy()
+            viewModel.setDisplayMode(newMode)
+          }
+        )
+      }
+    }
+
+    // 7b. ONE-TAP FULL-SCREEN TOGGLE BUTTON (AR, MR, and Object Mode)
+    // Always accessible: in NORMAL_UI it sits at top-right; in FULLSCREEN_UI it remains floating so user can tap again to restore UI.
     Box(
-      contentAlignment = Alignment.Center,
+      contentAlignment = Alignment.TopEnd,
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
-        .padding(top = 12.dp)
-        .align(Alignment.TopCenter)
+        .padding(top = 12.dp, end = 16.dp)
+        .align(Alignment.TopEnd)
     ) {
-      TopModePill(
-        currentMode = displayMode,
-        onModeSelected = { newMode ->
-          hapticManager.performHeavy()
-          viewModel.setDisplayMode(newMode)
-        }
-      )
+      IconButton(
+        onClick = {
+          hapticManager.performClick()
+          viewModel.toggleFullscreenUi()
+        },
+        modifier = Modifier
+          .size(48.dp)
+          .clip(CircleShape)
+          .background(
+            if (uiVisibilityState == UiVisibilityState.FULLSCREEN_UI)
+              Color(0x88000000)
+            else
+              Color(0xFF9EABB7).copy(alpha = 0.92f)
+          )
+          .testTag("fullscreen_toggle_button")
+      ) {
+        Icon(
+          imageVector = if (uiVisibilityState == UiVisibilityState.FULLSCREEN_UI)
+            Icons.Default.FullscreenExit
+          else
+            Icons.Default.Fullscreen,
+          contentDescription = if (uiVisibilityState == UiVisibilityState.FULLSCREEN_UI)
+            "Exit Full Screen"
+          else
+            "Enter Full Screen",
+          tint = if (uiVisibilityState == UiVisibilityState.FULLSCREEN_UI)
+            Color.White
+          else
+            Color(0xFF1E293B),
+          modifier = Modifier.size(24.dp)
+        )
+      }
     }
 
     var isTrackingRecoveryDismissed by remember { mutableStateOf(false) }
@@ -351,6 +435,7 @@ fun MixedRealityScreen(
     // Explicit Tracking Recovery Affordance (Point 10: Surface explicit tracking-recovery affordance when tracking lost)
     val isTrackingLost = (displayMode == DisplayMode.AR || displayMode == DisplayMode.MR) &&
       hasCameraPermission &&
+      uiVisibilityState == UiVisibilityState.NORMAL_UI &&
       !isTrackingRecoveryDismissed &&
       !telemetry.arTrackingStatus.startsWith("TRACKING") &&
       telemetry.arTrackingStatus != "UNINITIALIZED" &&
@@ -376,46 +461,52 @@ fun MixedRealityScreen(
     )
 
     // 8. BOTTOM CONTROLS: Floating Action Pill [ PHOTO | (● REC) | Open | Clear ]
-    Box(
-      contentAlignment = Alignment.BottomCenter,
-      modifier = Modifier
-        .fillMaxWidth()
-        .align(Alignment.BottomCenter)
-        .navigationBarsPadding()
-        .padding(bottom = 24.dp)
+    AnimatedVisibility(
+      visible = uiVisibilityState == UiVisibilityState.NORMAL_UI,
+      enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it },
+      exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it },
+      modifier = Modifier.align(Alignment.BottomCenter)
     ) {
-      BottomActionPill(
-        isRecording = isRecording,
-        recordingDurationSec = recordingDurationSec,
-        onPhotoClick = {
-          hapticManager.performDouble()
-          scope.launch {
-            flashAnim.snapTo(0.85f)
-            flashAnim.animateTo(0f, tween(350))
-          }
-          spatialSurfaceView.captureSnapshot(
-            onCaptured = { bmp ->
-              viewModel.saveSnapshot(bmp, context)
-            },
-            onError = { errMsg ->
-              viewModel.log("SNAPSHOT_ERR", errMsg)
+      Box(
+        contentAlignment = Alignment.BottomCenter,
+        modifier = Modifier
+          .fillMaxWidth()
+          .navigationBarsPadding()
+          .padding(bottom = 24.dp)
+      ) {
+        BottomActionPill(
+          isRecording = isRecording,
+          recordingDurationSec = recordingDurationSec,
+          onPhotoClick = {
+            hapticManager.performDouble()
+            scope.launch {
+              flashAnim.snapTo(0.85f)
+              flashAnim.animateTo(0f, tween(350))
             }
-          )
-        },
-        onRecClick = {
-          hapticManager.performHeavy()
-          viewModel.toggleRecording(spatialSurfaceView.arCoreSessionManager)
-        },
-        onOpenClick = {
-          hapticManager.performClick()
-          filePickerLauncher.launch("*/*")
-        },
-        onClearClick = {
-          hapticManager.performHeavy()
-          spatialSurfaceView.clearModelAndScene()
-          viewModel.clearActiveModelAndScene()
-        }
-      )
+            spatialSurfaceView.captureSnapshot(
+              onCaptured = { bmp ->
+                viewModel.saveSnapshot(bmp, context)
+              },
+              onError = { errMsg ->
+                viewModel.log("SNAPSHOT_ERR", errMsg)
+              }
+            )
+          },
+          onRecClick = {
+            hapticManager.performHeavy()
+            viewModel.toggleRecording(spatialSurfaceView.arCoreSessionManager)
+          },
+          onOpenClick = {
+            hapticManager.performClick()
+            filePickerLauncher.launch("*/*")
+          },
+          onClearClick = {
+            hapticManager.performHeavy()
+            spatialSurfaceView.clearModelAndScene()
+            viewModel.clearActiveModelAndScene()
+          }
+        )
+      }
     }
 
     // 8. Sheets for Model Selector, Marker Guide & Settings

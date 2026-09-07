@@ -179,9 +179,10 @@ class SpatialSurfaceView @JvmOverloads constructor(
         override fun onScale(detector: ScaleGestureDetector): Boolean {
           val scaleFactor = detector.scaleFactor
           if (displayMode == DisplayMode.OBJECT) {
-            filamentEngine.orbitDistance = (filamentEngine.orbitDistance / scaleFactor).coerceIn(1.8f, 3.2f)
+            filamentEngine.orbitDistance = (filamentEngine.orbitDistance / scaleFactor).coerceIn(1.0f, 6.0f)
+            filamentEngine.modelScale = (filamentEngine.modelScale * scaleFactor).coerceIn(0.1f, 8.0f)
           } else {
-            filamentEngine.modelScale = (filamentEngine.modelScale * scaleFactor).coerceIn(0.2f, 5.0f)
+            filamentEngine.modelScale = (filamentEngine.modelScale * scaleFactor).coerceIn(0.1f, 8.0f)
           }
           return true
         }
@@ -190,9 +191,9 @@ class SpatialSurfaceView @JvmOverloads constructor(
 
     rotateGestureDetector = TwoFingerRotateDetector { deltaDegrees ->
       if (displayMode == DisplayMode.OBJECT) {
-        filamentEngine.orbitYaw += deltaDegrees
+        filamentEngine.orbitYaw -= deltaDegrees
       } else {
-        filamentEngine.modelRotationDegrees += deltaDegrees
+        filamentEngine.modelRotationDegrees -= deltaDegrees
       }
     }
   }
@@ -453,9 +454,14 @@ class SpatialSurfaceView @JvmOverloads constructor(
               val primaryAnchor = activeArAnchors.lastOrNull()
               if (primaryAnchor != null) {
                 if (primaryAnchor.trackingState == TrackingState.TRACKING) {
+                  anchorLastKnownPoses[primaryAnchor.hashCode()] = primaryAnchor.pose
                   filamentEngine.updateAnchorPose(currentAsset, primaryAnchor.pose)
+                } else {
+                  // Hold at last valid pose during tracking pause or loss to prevent jumping
+                  anchorLastKnownPoses[primaryAnchor.hashCode()]?.let { lastPose ->
+                    filamentEngine.updateAnchorPose(currentAsset, lastPose)
+                  }
                 }
-                // When tracking is PAUSED / LOST: freeze world transform, do NOT update unanchored pose
               } else {
                 // Initial placement preview mode before user taps to anchor
                 filamentEngine.updateUnanchoredPose(currentAsset, latestTrackingData.cameraPosition, scratchCamForward)
@@ -587,15 +593,15 @@ class SpatialSurfaceView @JvmOverloads constructor(
 
           if (event.pointerCount == 1) {
             if (displayMode == DisplayMode.OBJECT) {
-              filamentEngine.orbitYaw += dx * 0.45f
+              filamentEngine.orbitYaw -= dx * 0.45f
               filamentEngine.orbitPitch = (filamentEngine.orbitPitch - dy * 0.45f).coerceIn(-80f, 80f)
             } else {
               // AR & MR: When model is placed/anchored, 1-finger gesture smoothly rotates in place
               if (activeArAnchors.isNotEmpty()) {
-                filamentEngine.modelRotationDegrees += dx * 0.45f
+                filamentEngine.modelRotationDegrees -= dx * 0.45f
               } else {
                 if (isOneFingerRotateMode || lastTouchY > height * 0.72f) {
-                  filamentEngine.modelRotationDegrees += dx * 0.45f
+                  filamentEngine.modelRotationDegrees -= dx * 0.45f
                 } else {
                   filamentEngine.modelOffsetX += dx * 0.0025f
                   filamentEngine.modelOffsetY -= dy * 0.0025f
@@ -608,7 +614,7 @@ class SpatialSurfaceView @JvmOverloads constructor(
               filamentEngine.panY = (filamentEngine.panY - dy * 0.003f).coerceIn(-0.25f, 0.25f)
             } else {
               // AR & MR: 2-finger horizontal drag rotates
-              filamentEngine.modelRotationDegrees += dx * 0.45f
+              filamentEngine.modelRotationDegrees -= dx * 0.45f
             }
           }
         }
@@ -653,6 +659,10 @@ class SpatialSurfaceView @JvmOverloads constructor(
           xPx
         }
         val frame = arCoreSessionManager.latestFrame ?: return
+        if (frame.camera.trackingState != TrackingState.TRACKING) {
+          DiagnosticsLogger.log(TAG, "Placement deferred: Camera tracking not yet stable (${frame.camera.trackingState})")
+          return
+        }
         val hit = arCoreSessionManager.hitTest(frame, mappedX, yPx)
         if (hit != null) {
           val hitPose = hit.hitPose
