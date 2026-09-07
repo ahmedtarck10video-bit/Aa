@@ -174,22 +174,24 @@ fun DiagnosticsHud(
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier.fillMaxWidth()
       ) {
-        val vpsStatus = when {
+        val earthStr = when {
+          telemetry.isEarthTrackingActive -> "Earth: Tracking"
+          telemetry.isGeospatialEnabled -> "Earth: Localizing"
+          else -> "Earth: Idle"
+        }
+        val vpsStr = when {
           telemetry.isVpsLocalized -> "VPS: Localized"
           telemetry.vpsAvailability == "AVAILABLE" -> "VPS: Available"
-          telemetry.isEarthTrackingActive -> "Earth: Tracking"
-          telemetry.isGeospatialActive -> "Geospatial: Active"
-          telemetry.isGeospatialEnabled -> "Earth: Localizing"
           else -> "VPS: Unavailable"
         }
         Text(
-          text = "Semantics: ${telemetry.dominantSemanticLabel} | $vpsStatus",
+          text = "Semantics: ${telemetry.dominantSemanticLabel} | $earthStr | $vpsStr",
           fontFamily = FontFamily.Monospace,
-          fontSize = 10.sp,
+          fontSize = 9.sp,
           color = when {
             telemetry.isVpsLocalized -> Color(0xFF22C55E)
             telemetry.isEarthTrackingActive -> Color(0xFF38BDF8)
-            else -> Color(0xFF38BDF8)
+            else -> Color(0xFF94A3B8)
           }
         )
         Text(

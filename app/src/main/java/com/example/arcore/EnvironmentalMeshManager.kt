@@ -673,48 +673,83 @@ class EnvironmentalMeshManager {
     }
     if (validGeometryChunks < 16) return false
 
-    // 3. Validate Spatial Completeness across quadrants around centroid
+    // 3. Validate Real Spatial Coverage (Grid Occupancy and Multi-Quadrant Balance)
+    // Discretize into 1m x 1m spatial grid cells to ensure true spatial coverage rather than isolated perimeter points
+    val occupiedCells = mutableSetOf<Pair<Int, Int>>()
+    for (c in centers) {
+      val cellX = Math.floor(c[0].toDouble()).toInt()
+      val cellZ = Math.floor(c[2].toDouble()).toInt()
+      occupiedCells.add(Pair(cellX, cellZ))
+    }
+    // A genuine full 3D scene (>=3m x 3m) must occupy at least 8 distinct 1m x 1m spatial grid cells
+    if (occupiedCells.size < 8) {
+      return false
+    }
+
     val meanX = centers.map { it[0] }.average().toFloat()
     val meanZ = centers.map { it[2] }.average().toFloat()
-    var q1 = false; var q2 = false; var q3 = false; var q4 = false
+    var q1Count = 0; var q2Count = 0; var q3Count = 0; var q4Count = 0
     for (c in centers) {
       val dx = c[0] - meanX
       val dz = c[2] - meanZ
-      if (dx >= 0 && dz >= 0) q1 = true
-      if (dx < 0 && dz >= 0) q2 = true
-      if (dx < 0 && dz < 0) q3 = true
-      if (dx >= 0 && dz < 0) q4 = true
+      if (dx >= 0 && dz >= 0) q1Count++
+      if (dx < 0 && dz >= 0) q2Count++
+      if (dx < 0 && dz < 0) q3Count++
+      if (dx >= 0 && dz < 0) q4Count++
     }
-    val quadrantsCovered = (if (q1) 1 else 0) + (if (q2) 1 else 0) + (if (q3) 1 else 0) + (if (q4) 1 else 0)
+    val quadrantsCovered = (if (q1Count >= 2) 1 else 0) +
+        (if (q2Count >= 2) 1 else 0) +
+        (if (q3Count >= 2) 1 else 0) +
+        (if (q4Count >= 2) 1 else 0)
     if (quadrantsCovered < 3) {
       return false
     }
 
-    // 4. Validate Mesh Topological Continuity (connectivity graph check)
-    // Every chunk must be contiguous with at least one neighboring chunk within max neighbor distance (1.5m)
+    // 4. Validate True Mesh Topological Continuity via Graph Connected Component (BFS)
+    // Build adjacency list: chunks are neighbors if Euclidean center distance <= 1.5m
     val maxNeighborDistanceSq = 1.5f * 1.5f
-    var connectedCount = 0
+    val adj = Array(centers.size) { mutableListOf<Int>() }
     for (i in centers.indices) {
       val c1 = centers[i]
-      var hasNeighbor = false
-      for (j in centers.indices) {
-        if (i == j) continue
+      for (j in i + 1 until centers.size) {
         val c2 = centers[j]
         val dX = c1[0] - c2[0]
         val dY = c1[1] - c2[1]
         val dZ = c1[2] - c2[2]
         val distSq = dX * dX + dY * dY + dZ * dZ
         if (distSq <= maxNeighborDistanceSq) {
-          hasNeighbor = true
-          break
+          adj[i].add(j)
+          adj[j].add(i)
         }
       }
-      if (hasNeighbor) connectedCount++
     }
 
-    // Require >= 90% spatial continuity across all accumulated chunks
-    val continuityRatio = connectedCount.toFloat() / centers.size.toFloat()
-    if (continuityRatio < 0.90f) {
+    // Run BFS to find largest connected component
+    val visited = BooleanArray(centers.size)
+    var maxComponentSize = 0
+    for (start in centers.indices) {
+      if (!visited[start]) {
+        var componentSize = 0
+        val queue = java.util.ArrayDeque<Int>()
+        queue.add(start)
+        visited[start] = true
+        while (queue.isNotEmpty()) {
+          val u = queue.poll()
+          componentSize++
+          for (v in adj[u]) {
+            if (!visited[v]) {
+              visited[v] = true
+              queue.add(v)
+            }
+          }
+        }
+        maxComponentSize = maxOf(maxComponentSize, componentSize)
+      }
+    }
+
+    // Require >= 85% of all chunks to form a single continuous, topologically integrated mesh structure
+    val continuityRatio = maxComponentSize.toFloat() / centers.size.toFloat()
+    if (continuityRatio < 0.85f) {
       return false
     }
 

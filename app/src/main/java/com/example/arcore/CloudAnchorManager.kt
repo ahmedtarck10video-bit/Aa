@@ -355,6 +355,7 @@ class CloudAnchorManager(context: Context? = null) {
     session: Session,
     cloudAnchorId: String,
     clientDeviceId: String = "${android.os.Build.MANUFACTURER}_${android.os.Build.MODEL}",
+    remoteHostDeviceId: String? = null,
     timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     onStatusChange: (CloudAnchorRecord) -> Unit
   ): String {
@@ -403,15 +404,15 @@ class CloudAnchorManager(context: Context? = null) {
 
         when (state) {
           Anchor.CloudAnchorState.SUCCESS -> {
-            val isRemoteHost = activeSharedExhibit != null &&
-                !activeSharedExhibit?.hostDeviceId.isNullOrEmpty() &&
-                activeSharedExhibit?.hostDeviceId != clientDeviceId
+            val originHost = activeSharedExhibit?.hostDeviceId ?: remoteHostDeviceId
+            val isRemoteHost = !originHost.isNullOrEmpty() &&
+                originHost != clientDeviceId
 
             if (isRemoteHost) {
               isCrossDeviceValidated = true
               crossDeviceState = CloudAnchorCrossDeviceState.CONFIRMED_CROSS_DEVICE_RESOLVED
               resolutionSource = CloudAnchorResolutionSource.CROSS_DEVICE_REMOTE_RESOLVED
-              Log.i(TAG, "CONFIRMED cross-device resolution: Device B ($clientDeviceId) resolved anchor from Device A (${activeSharedExhibit?.hostDeviceId})")
+              Log.i(TAG, "CONFIRMED cross-device resolution: Device B ($clientDeviceId) resolved anchor from Device A ($originHost)")
             } else {
               isCrossDeviceValidated = false
               crossDeviceState = CloudAnchorCrossDeviceState.LOCAL_ONLY
@@ -522,9 +523,43 @@ class CloudAnchorManager(context: Context? = null) {
       session = session,
       cloudAnchorId = sharedExhibit.cloudAnchorId,
       clientDeviceId = clientDeviceId,
+      remoteHostDeviceId = sharedExhibit.hostDeviceId,
       timeoutMs = timeoutMs,
       onStatusChange = onStatusChange
     )
+  }
+
+  /**
+   * Strictly validates a completed Device A -> Host -> Cloud ID -> Device B -> Resolve flow.
+   * Ensures that cross-device resolution is marked as confirmed ONLY when Device B
+   * successfully resolves an anchor that originated from a different host device (Device A).
+   * Local hosting, ID creation, and local cache do NOT mark cross-device as valid.
+   */
+  fun verifyCrossDeviceResolution(
+    cloudAnchorId: String,
+    originHostDeviceId: String,
+    resolvedByDeviceId: String,
+    isArCoreResolveSuccess: Boolean
+  ): Boolean {
+    val isRealRemoteResolve = isArCoreResolveSuccess &&
+        cloudAnchorId.isNotEmpty() &&
+        originHostDeviceId.isNotEmpty() &&
+        resolvedByDeviceId.isNotEmpty() &&
+        originHostDeviceId != resolvedByDeviceId
+
+    if (isRealRemoteResolve) {
+      isCrossDeviceValidated = true
+      crossDeviceState = CloudAnchorCrossDeviceState.CONFIRMED_CROSS_DEVICE_RESOLVED
+      resolutionSource = CloudAnchorResolutionSource.CROSS_DEVICE_REMOTE_RESOLVED
+      Log.i(TAG, "Cross-device resolution verified: Device B ($resolvedByDeviceId) resolved anchor ($cloudAnchorId) hosted by Device A ($originHostDeviceId)")
+      return true
+    } else {
+      isCrossDeviceValidated = false
+      crossDeviceState = CloudAnchorCrossDeviceState.LOCAL_ONLY
+      resolutionSource = CloudAnchorResolutionSource.LOCAL_DEVICE_HOSTED
+      Log.w(TAG, "Cross-device resolution verification rejected: not a valid remote resolve flow.")
+      return false
+    }
   }
 
   /**

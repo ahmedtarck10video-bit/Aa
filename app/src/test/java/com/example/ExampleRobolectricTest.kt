@@ -330,6 +330,29 @@ class ExampleRobolectricTest {
     assertEquals(cloudAnchorId, cachedId)
     assertEquals(com.example.arcore.CloudAnchorResolutionSource.LOCAL_DEVICE_CACHE, manager.resolutionSource)
     org.junit.Assert.assertFalse("Local cache must NOT confirm cross-device resolution", manager.isCrossDeviceValidated)
+
+    // Step 4: Verify real Device A -> Host -> Cloud ID -> Device B -> Resolve flow
+    // Device B resolves anchor hosted by Device A
+    val resolveSuccess = manager.verifyCrossDeviceResolution(
+      cloudAnchorId = cloudAnchorId,
+      originHostDeviceId = deviceA,
+      resolvedByDeviceId = deviceB,
+      isArCoreResolveSuccess = true
+    )
+    assertTrue("Real remote resolve must confirm cross-device validation", resolveSuccess)
+    assertTrue("Manager state must confirm cross-device validation", manager.isCrossDeviceValidated)
+    assertEquals(com.example.arcore.CloudAnchorCrossDeviceState.CONFIRMED_CROSS_DEVICE_RESOLVED, manager.crossDeviceState)
+    assertEquals(com.example.arcore.CloudAnchorResolutionSource.CROSS_DEVICE_REMOTE_RESOLVED, manager.resolutionSource)
+
+    // Self-resolve (same device) must NOT confirm cross-device
+    val sameDeviceResolve = manager.verifyCrossDeviceResolution(
+      cloudAnchorId = cloudAnchorId,
+      originHostDeviceId = deviceA,
+      resolvedByDeviceId = deviceA,
+      isArCoreResolveSuccess = true
+    )
+    org.junit.Assert.assertFalse("Local resolve on same device must NOT validate cross-device", sameDeviceResolve)
+    org.junit.Assert.assertFalse("Manager must remain false for same device resolve", manager.isCrossDeviceValidated)
   }
 
   @Test
@@ -361,6 +384,15 @@ class ExampleRobolectricTest {
     org.junit.Assert.assertFalse("Loopback mode must NOT be reported as online multiplayer", backend.isOnlineMultiplayerActive)
     org.junit.Assert.assertFalse("Loopback mode must NOT report backend relay connected", backend.isBackendConnected)
     assertEquals(com.example.arcore.MultiplayerMode.LOCAL_LOOPBACK_TEST, backend.multiplayerMode)
+
+    // Fallback loopback mode
+    val fallbackBackend = com.example.arcore.RealtimeMultiplayerBackend()
+    fallbackBackend.startFallbackLoopbackService("fallback_room")
+    assertTrue("Fallback loopback must be active", fallbackBackend.isLoopbackMode)
+    assertTrue("Fallback test active flag must be true", fallbackBackend.isLoopbackTestActive)
+    org.junit.Assert.assertFalse("Fallback loopback must NOT be reported as online multiplayer", fallbackBackend.isOnlineMultiplayerActive)
+    org.junit.Assert.assertFalse("Fallback loopback must NOT report backend relay connected", fallbackBackend.isBackendConnected)
+    assertEquals(com.example.arcore.MultiplayerMode.FALLBACK_LOOPBACK, fallbackBackend.multiplayerMode)
   }
 
   @Test

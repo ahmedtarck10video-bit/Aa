@@ -94,6 +94,7 @@ enum class BackendConnectionState {
 enum class MultiplayerMode {
   OFFLINE,
   LOCAL_LOOPBACK_TEST,
+  FALLBACK_LOOPBACK,
   ONLINE_MULTIPLAYER
 }
 
@@ -159,13 +160,20 @@ class RealtimeMultiplayerBackend {
     private set
 
   val isBackendConnected: Boolean
-    get() = !isLoopbackMode && _connectionState.value == BackendConnectionState.CONNECTED
+    get() = !isLoopbackMode &&
+        multiplayerMode == MultiplayerMode.ONLINE_MULTIPLAYER &&
+        _connectionState.value == BackendConnectionState.CONNECTED
 
   val isOnlineMultiplayerActive: Boolean
-    get() = !isLoopbackMode && isBackendConnected && _currentRoom.value != null
+    get() = !isLoopbackMode &&
+        multiplayerMode == MultiplayerMode.ONLINE_MULTIPLAYER &&
+        isBackendConnected &&
+        _currentRoom.value != null
 
   val isLoopbackTestActive: Boolean
-    get() = isLoopbackMode && _currentRoom.value != null
+    get() = isLoopbackMode &&
+        (multiplayerMode == MultiplayerMode.LOCAL_LOOPBACK_TEST || multiplayerMode == MultiplayerMode.FALLBACK_LOOPBACK) &&
+        _currentRoom.value != null
 
   /**
    * NEVER report multiplayer as active when the backend is disconnected!
@@ -200,7 +208,7 @@ class RealtimeMultiplayerBackend {
         .build()
     } catch (e: Exception) {
       Log.w(TAG, "Invalid WebSocket URL '$backendEndpoint': ${e.message}. Falling back to local peer backend.")
-      startLoopbackService()
+      startFallbackLoopbackService()
       return
     }
 
@@ -263,8 +271,8 @@ class RealtimeMultiplayerBackend {
     if (isExplicitDisconnect) return
     reconnectAttempts++
     if (reconnectAttempts > 2) {
-      Log.i(TAG, "Remote relay unavailable. Gracefully starting local loopback peer multiplayer.")
-      startLoopbackService()
+      Log.i(TAG, "Remote relay unavailable. Gracefully starting local fallback peer multiplayer.")
+      startFallbackLoopbackService()
       return
     }
 
@@ -662,6 +670,52 @@ class RealtimeMultiplayerBackend {
     onEvent?.invoke(MultiplayerEvent.RoomStateSynced(room))
     onEvent?.invoke(MultiplayerEvent.UserJoined(peerUser))
     Log.i(TAG, "Started local loopback peer multiplayer room '$roomId' with active peer presence.")
+  }
+
+  /**
+   * Starts a local fallback loopback multiplayer room when remote relay is unreachable.
+   * STRICT REQUIREMENT: Keep fallback/loopback strictly separate from ONLINE_MULTIPLAYER.
+   * Never report fallback or loopback as online multiplayer.
+   */
+  fun startFallbackLoopbackService(roomId: String = "fallback_peer_room") {
+    isLoopbackMode = true
+    multiplayerMode = MultiplayerMode.FALLBACK_LOOPBACK
+    isExplicitDisconnect = false
+    _connectionState.value = BackendConnectionState.CONNECTED
+    onEvent?.invoke(MultiplayerEvent.ConnectionChanged(BackendConnectionState.CONNECTED))
+
+    val hostUser = localUser.copy(isHost = true)
+    localUser = hostUser
+
+    val peerUser = MultiplayerUser(
+      userId = "peer_ar_fallback",
+      displayName = "AR Fallback Peer",
+      isHost = false,
+      avatarColorRgb = 0xF59E0B
+    )
+
+    val room = MultiplayerRoom(
+      roomId = roomId,
+      roomName = "Fallback AR Room (Local Only)",
+      hostUserId = hostUser.userId,
+      connectedUsers = mapOf(
+        hostUser.userId to hostUser,
+        peerUser.userId to peerUser
+      ),
+      userPoses = mapOf(
+        peerUser.userId to UserPose(
+          userId = peerUser.userId,
+          posX = 0.5f,
+          posY = 0.0f,
+          posZ = -1.2f
+        )
+      )
+    )
+
+    _currentRoom.value = room
+    onEvent?.invoke(MultiplayerEvent.RoomStateSynced(room))
+    onEvent?.invoke(MultiplayerEvent.UserJoined(peerUser))
+    Log.i(TAG, "Started local fallback loopback peer room '$roomId'. Online multiplayer remains strictly FALSE.")
   }
 
   /**

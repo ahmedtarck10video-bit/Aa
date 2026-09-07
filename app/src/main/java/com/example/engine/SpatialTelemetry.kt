@@ -41,6 +41,7 @@ data class TelemetryState(
   val earthTrackingState: String = "IDLE",
   val earthCoordinates: String = "0.000000°, 0.000000°",
   val vpsAvailability: String = "UNAVAILABLE",
+  val isVpsActive: Boolean = false,
   val cloudAnchorsCount: Int = 0,
   val localAnchorsCount: Int = 0,
   val pendingCloudAnchorsCount: Int = 0,

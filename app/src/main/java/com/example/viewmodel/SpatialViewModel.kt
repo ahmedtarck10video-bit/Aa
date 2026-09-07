@@ -402,7 +402,8 @@ class SpatialViewModel(application: Application) : AndroidViewModel(application)
         isGeospatialEnabled = trackingData.geospatialStatus.isEnabled,
         hasLocationPermission = trackingData.geospatialStatus.locationPermissionGranted,
         isEarthTrackingActive = trackingData.geospatialStatus.trackingState == "TRACKING",
-        isVpsLocalized = trackingData.geospatialStatus.isVpsLocalized,
+        isVpsActive = trackingData.geospatialStatus.vpsAvailability == "AVAILABLE",
+        isVpsLocalized = trackingData.geospatialStatus.isVpsLocalized && trackingData.geospatialStatus.vpsAvailability == "AVAILABLE",
         isGeospatialActive = trackingData.geospatialStatus.isSupported && trackingData.geospatialStatus.isEnabled && trackingData.geospatialStatus.trackingState == "TRACKING",
         earthTrackingState = when {
           !trackingData.geospatialStatus.isSupported -> "UNSUPPORTED"
