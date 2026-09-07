@@ -159,7 +159,7 @@ class RealtimeMultiplayerBackend {
     private set
 
   val isBackendConnected: Boolean
-    get() = _connectionState.value == BackendConnectionState.CONNECTED
+    get() = !isLoopbackMode && _connectionState.value == BackendConnectionState.CONNECTED
 
   val isOnlineMultiplayerActive: Boolean
     get() = !isLoopbackMode && isBackendConnected && _currentRoom.value != null
